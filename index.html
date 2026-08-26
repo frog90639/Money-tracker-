@@ -44,6 +44,7 @@ class MoneyTracker {
         this.transactions = data?.transactions || [];
         this.budgets = data?.budgets || [];
         this.tasks = data?.tasks || [];
+        this.income = data?.income || { salary: 0, otherIncomeEnabled: false, otherIncomeAmount: 0 };
         this.currentTab = 'planning';
         this.showSettings = false;
         this.settingsSection = 'accounts';
@@ -53,30 +54,47 @@ class MoneyTracker {
         this.editingCategory = null;
         this.addingTask = false;
         this.editingTask = null;
-        this.taskFilter = 'all';
         this.addingTransaction = false;
         this.editingTransaction = null;
         this.txnFilterAccount = 'all';
         this.txnFilterCategory = 'all';
         this.txnFilterType = 'all';
         this.searchText = '';
+        this.editingBudget = null;
+        this.expandedGroups = { essential: false, saving: false, spending: false };
+        this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
+        this.migrateLegacyIncomeCategories();
         this.render();
+    }
+    // Removes old "Salary" / "Other Income" categories left over from earlier versions
+    // of this app, where income lived as a category instead of a Settings > Income field.
+    migrateLegacyIncomeCategories() {
+        const legacyNames = ['salary', 'other income'];
+        const before = this.categories.length;
+        this.categories = this.categories.filter(c => !legacyNames.includes((c.name || '').trim().toLowerCase()));
+        if (this.categories.length !== before) {
+            const remainingIds = new Set(this.categories.map(c => c.id));
+            this.budgets = this.budgets.filter(b => remainingIds.has(b.categoryId));
+            this.transactions.forEach(t => { if (t.categoryId && !remainingIds.has(t.categoryId)) t.categoryId = ''; });
+            this.tasks.forEach(t => { if (t.categoryId && !remainingIds.has(t.categoryId)) t.categoryId = ''; });
+            this.saveData();
+        }
     }
     defaultCategories() {
         return [
-            { id: 'c_salary', name: 'Salary', type: 'income' },
-            { id: 'c_otherinc', name: 'Other Income', type: 'income' },
-            { id: 'c_housing', name: 'Housing', type: 'expense' },
-            { id: 'c_utilities', name: 'Utilities', type: 'expense' },
-            { id: 'c_groceries', name: 'Groceries', type: 'expense' },
-            { id: 'c_transport', name: 'Transport', type: 'expense' },
-            { id: 'c_subscriptions', name: 'Subscriptions', type: 'expense' },
-            { id: 'c_entertainment', name: 'Entertainment', type: 'expense' },
-            { id: 'c_other', name: 'Other', type: 'expense' }
+            { id: 'c_housing', name: 'Housing', group: 'essential' },
+            { id: 'c_utilities', name: 'Utilities', group: 'essential' },
+            { id: 'c_groceries', name: 'Groceries', group: 'essential' },
+            { id: 'c_transport', name: 'Transport', group: 'essential' },
+            { id: 'c_savings', name: 'Savings', group: 'saving' },
+            { id: 'c_subscriptions', name: 'Subscriptions', group: 'spending' },
+            { id: 'c_entertainment', name: 'Entertainment', group: 'spending' },
+            { id: 'c_other', name: 'Other', group: 'spending' }
         ];
     }
+    categoryGroup(c) { return c.group || 'spending'; }
     loadData() { try { return JSON.parse(localStorage.getItem('moneyTrackerData')); } catch(e) { return null; } }
-    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, categories: this.categories, transactions: this.transactions, budgets: this.budgets, tasks: this.tasks})); } catch(e) {} }
+    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, categories: this.categories, transactions: this.transactions, budgets: this.budgets, tasks: this.tasks, income: this.income})); } catch(e) {} }
     uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
     fmt(n) { const v = isNaN(n) ? 0 : n; return '£' + v.toFixed(2); }
     monthKey(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
@@ -128,14 +146,14 @@ class MoneyTracker {
     // ---------- CATEGORIES ----------
     toggleAddCategory() { this.addingCategory = !this.addingCategory; this.editingCategory = null; this.render(); }
     toggleEditCategory(id) { this.editingCategory = this.editingCategory === id ? null : id; this.render(); }
-    saveCategory(id, name, type) {
+    saveCategory(id, name, group) {
         if (!name) return;
         if (id) {
             const c = this.categories.find(x => x.id === id);
-            if (c) { c.name = name; c.type = type; }
+            if (c) { c.name = name; c.group = group || 'spending'; }
             this.editingCategory = null;
         } else {
-            this.categories.push({ id: this.uid(), name, type });
+            this.categories.push({ id: this.uid(), name, group: group || 'spending' });
             this.addingCategory = false;
         }
         this.saveData(); this.render();
@@ -144,14 +162,32 @@ class MoneyTracker {
         if (!confirm('Delete this category? Budgets for it will also be removed.')) return;
         this.categories = this.categories.filter(c => c.id !== id);
         this.budgets = this.budgets.filter(b => b.categoryId !== id);
+        this.transactions.forEach(t => { if (t.categoryId === id) t.categoryId = ''; });
+        this.tasks.forEach(t => { if (t.categoryId === id) t.categoryId = ''; });
+        if (this.editingBudget === id) this.editingBudget = null;
+        if (this.editingCategory === id) this.editingCategory = null;
+        if (this.txnFilterCategory === id) this.txnFilterCategory = 'all';
+        this.saveData(); this.render();
+    }
+
+    // ---------- INCOME SETTINGS ----------
+    totalIncome() { return (parseFloat(this.income.salary) || 0) + (this.income.otherIncomeEnabled ? (parseFloat(this.income.otherIncomeAmount) || 0) : 0); }
+    toggleOtherIncomeUI(checked) { this.otherIncomeUIEnabled = checked; this.render(); }
+    saveIncomeSettings(salary, otherEnabled, otherAmount) {
+        this.income.salary = parseFloat(salary) || 0;
+        this.income.otherIncomeEnabled = !!otherEnabled;
+        this.income.otherIncomeAmount = otherEnabled ? (parseFloat(otherAmount) || 0) : 0;
+        this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
         this.saveData(); this.render();
     }
 
     // ---------- BUDGETS (Planning) ----------
     getBudget(categoryId) { return this.budgets.find(b => b.categoryId === categoryId); }
+    toggleEditBudget(categoryId) { this.editingBudget = this.editingBudget === categoryId ? null : categoryId; this.render(); }
     setBudget(categoryId, amount) {
         const amt = parseFloat(amount) || 0;
         let b = this.getBudget(categoryId);
+        this.editingBudget = null;
         if (!b) { b = { categoryId, monthlyAmount: amt }; this.budgets.push(b); }
         else { b.monthlyAmount = amt; }
         this.saveData(); this.render();
@@ -165,14 +201,22 @@ class MoneyTracker {
     // ---------- TASKS (Monthly recurring) ----------
     toggleAddTask() { this.addingTask = !this.addingTask; this.editingTask = null; this.render(); }
     toggleEditTask(id) { this.editingTask = this.editingTask === id ? null : id; this.render(); }
-    saveTask(id, name, amount, dueDay, accountId, categoryId) {
-        if (!name) return;
+    saveTask(id, text, orderPos) {
+        if (!text) return;
+        const pos = Math.max(1, parseInt(orderPos) || (this.tasks.length + 1));
         if (id) {
-            const t = this.tasks.find(x => x.id === id);
-            if (t) { t.name = name; t.amount = parseFloat(amount) || 0; t.dueDay = parseInt(dueDay) || 1; t.accountId = accountId; t.categoryId = categoryId; }
+            const idx = this.tasks.findIndex(x => x.id === id);
+            if (idx === -1) return;
+            const t = this.tasks[idx];
+            t.text = text;
+            this.tasks.splice(idx, 1);
+            const insertAt = Math.min(pos - 1, this.tasks.length);
+            this.tasks.splice(insertAt, 0, t);
             this.editingTask = null;
         } else {
-            this.tasks.push({ id: this.uid(), name, amount: parseFloat(amount) || 0, dueDay: parseInt(dueDay) || 1, accountId, categoryId, paidMonths: {} });
+            const t = { id: this.uid(), text, paidMonths: {} };
+            const insertAt = Math.min(pos - 1, this.tasks.length);
+            this.tasks.splice(insertAt, 0, t);
             this.addingTask = false;
         }
         this.saveData(); this.render();
@@ -190,13 +234,6 @@ class MoneyTracker {
         if (t.paidMonths[mk]) delete t.paidMonths[mk];
         else t.paidMonths[mk] = true;
         this.saveData(); this.render();
-    }
-    markTaskPaidAsTransaction(id) {
-        const t = this.tasks.find(x => x.id === id);
-        if (!t) return;
-        if (!t.accountId) { alert('Assign an account to this task first (edit it) to log it as a transaction.'); return; }
-        this.transactions.push({ id: this.uid(), date: new Date().toISOString().slice(0,10), accountId: t.accountId, categoryId: t.categoryId || '', type: 'expense', amount: t.amount, description: t.name, notes: 'Auto-logged from monthly task' });
-        this.toggleTaskPaid(id);
     }
 
     // ---------- TRANSACTIONS (Tracking) ----------
@@ -263,73 +300,84 @@ class MoneyTracker {
     }
 
     // ---------- RENDER: PLANNING ----------
+    renderBudgetRow(c) {
+        const b = this.getBudget(c.id);
+        const target = b ? b.monthlyAmount : 0;
+        const isEditing = this.editingBudget === c.id || !b;
+        let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+        html += '<div class="flex items-center justify-between" style="color: var(--color-text);"><span class="font-medium">' + c.name + '</span>';
+        if (isEditing) {
+            html += '<div class="flex items-center gap-2"><span class="text-xs" style="color: var(--color-text-muted);">Target £</span><input id="bg_' + c.id + '" type="number" step="0.01" value="' + target + '" class="w-20 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><button onclick="window.app.setBudget(\'' + c.id + '\', document.getElementById(\'bg_' + c.id + '\').value)" class="text-xs px-2 py-1 rounded text-white" style="background-color: var(--color-primary);">Save</button></div></div>';
+        } else {
+            html += '<div class="flex items-center gap-2"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(target) + '</span><button onclick="window.app.toggleEditBudget(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit</button></div></div>';
+        }
+        html += '</div>';
+        return html;
+    }
+    toggleGroupExpand(key) { this.expandedGroups[key] = !this.expandedGroups[key]; this.render(); }
+    groupBudgetTotal(key) {
+        return this.categories.filter(c => this.categoryGroup(c) === key)
+            .reduce((sum, c) => { const b = this.getBudget(c.id); return sum + (b ? (parseFloat(b.monthlyAmount) || 0) : 0); }, 0);
+    }
     renderPlanningTab() {
-        let html = '<p class="text-sm mb-4" style="color: var(--color-text-muted);">Set a monthly budget target for each category. Actuals below reflect ' + this.monthLabel(this.monthKey()) + '.</p>';
-        ['income','expense'].forEach(type => {
-            const cats = this.categories.filter(c => c.type === type);
+        const totalIncome = this.totalIncome();
+        let html = '<p class="text-sm mb-4" style="color: var(--color-text-muted);">Set a monthly budget target for each category, then hit Save. Actuals below reflect ' + this.monthLabel(this.monthKey()) + '.</p>';
+        if (totalIncome === 0) html += '<p class="text-sm mb-4 p-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Set your salary in ⚙️ Settings → Income to see each section&#8217;s share of income.</p>';
+
+        const groups = [['essential','Essentials'],['saving','Savings'],['spending','Spending']];
+        groups.forEach(([key,label]) => {
+            const cats = this.categories.filter(c => this.categoryGroup(c) === key);
             if (cats.length === 0) return;
-            html += '<h3 class="text-sm font-bold uppercase mb-2 mt-4" style="color: ' + (type === 'income' ? 'var(--color-income)' : 'var(--color-expense)') + ';">' + (type === 'income' ? 'Income' : 'Expenses') + '</h3>';
-            cats.forEach(c => {
-                const b = this.getBudget(c.id);
-                const target = b ? b.monthlyAmount : 0;
-                const actual = this.actualForCategoryThisMonth(c.id);
-                const pct = target > 0 ? Math.min(100, (actual/target)*100) : 0;
-                html += '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-                html += '<div class="flex items-center justify-between mb-2"><span class="font-medium" style="color: var(--color-text);">' + c.name + '</span>';
-                html += '<div class="flex items-center gap-2"><span class="text-xs" style="color: var(--color-text-muted);">Target £</span><input type="number" step="0.01" value="' + target + '" onchange="window.app.setBudget(\'' + c.id + '\', this.value)" class="w-20 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div></div>';
-                if (target > 0) {
-                    html += '<div class="w-full rounded-full h-2 mb-1" style="background-color: var(--color-border);"><div class="h-2 rounded-full" style="width: ' + pct + '%; background-color: ' + (type === 'income' ? 'var(--color-income)' : (actual > target ? 'var(--color-error)' : 'var(--color-expense)')) + ';"></div></div>';
-                    html += '<p class="text-xs" style="color: var(--color-text-muted);">' + this.fmt(actual) + ' of ' + this.fmt(target) + '</p>';
-                }
-                html += '</div>';
-            });
+            const groupTotal = this.groupBudgetTotal(key);
+            const pct = totalIncome > 0 ? ((groupTotal / totalIncome) * 100).toFixed(1) : '—';
+            const expanded = !!this.expandedGroups[key];
+            html += '<button onclick="window.app.toggleGroupExpand(\'' + key + '\')" class="w-full flex items-center justify-between py-3 px-1 mt-3 border-b" style="border-color: var(--color-border);">';
+            html += '<span class="text-sm font-bold uppercase" style="color: var(--color-text);">' + (expanded ? '▾ ' : '▸ ') + label + '</span>';
+            html += '<span class="text-sm font-bold" style="color: var(--color-expense);">' + (totalIncome > 0 ? pct + '% of income' : this.fmt(groupTotal)) + '</span></button>';
+            if (expanded) {
+                cats.forEach(c => { html += this.renderBudgetRow(c); });
+            }
         });
+
         if (this.categories.length === 0) html += '<p style="color: var(--color-text-muted);">No categories yet. Add some in Settings.</p>';
         return html;
     }
 
     // ---------- RENDER: TASKS ----------
     renderTasksTab() {
-        let html = '<div class="flex gap-2 mb-4 overflow-x-auto">';
-        ['all','unpaid','paid'].forEach(f => {
-            html += '<button onclick="window.app.taskFilter=\'' + f + '\'; window.app.render()" class="px-3 py-1 rounded-full text-sm whitespace-nowrap" style="background-color: ' + (this.taskFilter===f?'var(--color-primary)':'var(--color-surface)') + '; color: ' + (this.taskFilter===f?'var(--color-primary-text)':'var(--color-text)') + '; border: 1px solid var(--color-border);">' + f.charAt(0).toUpperCase()+f.slice(1) + '</button>';
-        });
-        html += '</div>';
-
-        if (this.addingTask) html += this.renderTaskForm(null);
-
         const mk = this.monthKey();
-        let tasks = this.tasks.slice().sort((a,b) => a.dueDay - b.dueDay);
-        if (this.taskFilter === 'unpaid') tasks = tasks.filter(t => !(t.paidMonths && t.paidMonths[mk]));
-        if (this.taskFilter === 'paid') tasks = tasks.filter(t => t.paidMonths && t.paidMonths[mk]);
+        let html = '<div class="flex items-center justify-between mb-4"><p class="text-sm" style="color: var(--color-text-muted);">' + this.monthLabel(mk) + '</p><button onclick="window.app.resetMonthlyTasks()" class="text-xs px-3 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">↻ Reset for new month</button></div>';
 
-        if (tasks.length === 0) html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No recurring tasks here.</p>';
+        if (this.tasks.length === 0) html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No monthly tasks yet. Add some in ⚙️ Settings → Monthly Tasks.</p>';
 
-        tasks.forEach(t => {
+        this.tasks.forEach(t => {
             const paid = !!(t.paidMonths && t.paidMonths[mk]);
-            const acc = this.accounts.find(a => a.id === t.accountId);
-            if (this.editingTask === t.id) { html += this.renderTaskForm(t); return; }
-            html += '<div class="swipe-item mb-2" data-swipe-item><div class="swipe-item-content"><div class="p-3 rounded-lg border flex-1" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-            html += '<div class="flex items-center justify-between"><div class="flex items-center gap-3">';
-            html += '<button onclick="window.app.toggleTaskPaid(\'' + t.id + '\')" class="w-6 h-6 rounded-full flex items-center justify-center border-2" style="border-color: ' + (paid?'var(--color-success)':'var(--color-border)') + '; background-color: ' + (paid?'var(--color-success)':'transparent') + '; color: white;">' + (paid?'✓':'') + '</button>';
-            html += '<div><p class="font-medium" style="color: var(--color-text); ' + (paid?'text-decoration: line-through; opacity: 0.6;':'') + '">' + t.name + '</p><p class="text-xs" style="color: var(--color-text-muted);">Due day ' + t.dueDay + (acc?' · ' + acc.name:'') + '</p></div></div>';
-            html += '<div class="text-right"><p class="font-bold" style="color: var(--color-text);">' + this.fmt(t.amount) + '</p></div></div>';
-            html += '<div class="flex gap-2 mt-2">';
-            if (!paid) html += '<button onclick="window.app.markTaskPaidAsTransaction(\'' + t.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Mark paid + log transaction</button>';
-            html += '<button onclick="window.app.toggleEditTask(\'' + t.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit</button>';
-            html += '</div></div></div><div class="swipe-delete" onclick="window.app.deleteTask(\'' + t.id + '\')">Delete</div></div>';
+            html += '<label class="flex items-center gap-3 p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border); cursor: pointer;">';
+            html += '<input type="checkbox" ' + (paid?'checked':'') + ' onchange="window.app.toggleTaskPaid(\'' + t.id + '\')" class="w-5 h-5 flex-shrink-0">';
+            html += '<p class="flex-1" style="color: var(--color-text); ' + (paid?'text-decoration: line-through; opacity: 0.6;':'') + '">' + t.text + '</p>';
+            html += '</label>';
         });
         return html;
     }
+    resetMonthlyTasks() {
+        if (this.tasks.length === 0) return;
+        if (!confirm('Reset all monthly tasks for ' + this.monthLabel(this.monthKey()) + '? This will untick everything for this month.')) return;
+        const mk = this.monthKey();
+        this.tasks.forEach(t => { if (t.paidMonths) delete t.paidMonths[mk]; });
+        this.saveData(); this.render();
+    }
     renderTaskForm(t) {
         const isEdit = !!t;
+        const currentIdx = isEdit ? this.tasks.findIndex(x => x.id === t.id) : -1;
+        const optionCount = isEdit ? this.tasks.length : this.tasks.length + 1;
+        const defaultPos = isEdit ? currentIdx + 1 : optionCount;
         let html = '<div class="p-4 rounded-lg border mb-3" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-        html += '<input id="tk_name" placeholder="Name (e.g. Netflix, Rent)" value="' + (t?t.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<div class="grid grid-cols-2 gap-2 mb-2"><input id="tk_amount" type="number" step="0.01" placeholder="Amount £" value="' + (t?t.amount:'') + '" class="px-3 py-2 rounded border" style="border-color: var(--color-border);">';
-        html += '<input id="tk_day" type="number" min="1" max="31" placeholder="Due day (1-31)" value="' + (t?t.dueDay:'') + '" class="px-3 py-2 rounded border" style="border-color: var(--color-border);"></div>';
-        html += '<select id="tk_account" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="">No account</option>' + this.accounts.map(a => '<option value="' + a.id + '"' + (t && t.accountId===a.id?' selected':'') + '>' + a.name + '</option>').join('') + '</select>';
-        html += '<select id="tk_category" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);"><option value="">No category</option>' + this.categories.filter(c=>c.type==='expense').map(c => '<option value="' + c.id + '"' + (t && t.categoryId===c.id?' selected':'') + '>' + c.name + '</option>').join('') + '</select>';
-        html += '<div class="flex gap-2"><button onclick="window.app.saveTask(' + (isEdit?"'"+t.id+"'":'null') + ', document.getElementById(\'tk_name\').value, document.getElementById(\'tk_amount\').value, document.getElementById(\'tk_day\').value, document.getElementById(\'tk_account\').value, document.getElementById(\'tk_category\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<input id="tk_text" placeholder="Task (e.g. Enter salary, Adjust monthly figures)" value="' + (t?t.text:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Order</p>';
+        let opts = '';
+        for (let i = 1; i <= optionCount; i++) { opts += '<option value="' + i + '"' + (i===defaultPos?' selected':'') + '>' + i + '</option>'; }
+        html += '<select id="tk_order" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">' + opts + '</select>';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveTask(' + (isEdit?"'"+t.id+"'":'null') + ', document.getElementById(\'tk_text\').value, document.getElementById(\'tk_order\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditTask(\''+t.id+'\')':'toggleAddTask()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
@@ -373,7 +421,7 @@ class MoneyTracker {
         html += '<input id="tx_amount" type="number" step="0.01" placeholder="Amount £" value="' + (t?t.amount:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<input id="tx_desc" placeholder="Description" value="' + (t?t.description||'':'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<select id="tx_account" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">' + this.accounts.map(a => '<option value="' + a.id + '"' + (t && t.accountId===a.id?' selected':'') + '>' + a.name + '</option>').join('') + '</select>';
-        html += '<select id="tx_category" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="">No category</option>' + this.categories.map(c => '<option value="' + c.id + '"' + (t && t.categoryId===c.id?' selected':'') + '>' + c.name + ' (' + c.type + ')</option>').join('') + '</select>';
+        html += '<select id="tx_category" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="">No category</option>' + this.categories.map(c => '<option value="' + c.id + '"' + (t && t.categoryId===c.id?' selected':'') + '>' + c.name + ' (' + this.categoryGroup(c) + ')</option>').join('') + '</select>';
         html += '<textarea id="tx_notes" placeholder="Notes (optional)" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">' + (t?t.notes||'':'') + '</textarea>';
         const saveTypeExpr = "(document.getElementById('tx_type_income').style.opacity=='1' ? 'income' : 'expense')";
         html += '<div class="flex gap-2"><button onclick="window.app.saveTransaction(' + (isEdit?"'"+t.id+"'":'null') + ', document.getElementById(\'tx_date\').value, document.getElementById(\'tx_account\').value, document.getElementById(\'tx_category\').value, ' + saveTypeExpr + ', document.getElementById(\'tx_amount\').value, document.getElementById(\'tx_desc\').value, document.getElementById(\'tx_notes\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
@@ -415,8 +463,10 @@ class MoneyTracker {
     // ---------- RENDER: SETTINGS ----------
     renderSettings() {
         let html = '<div class="max-w-4xl mx-auto px-4 py-4 border-t" style="border-color: var(--color-border); background-color: var(--color-surface);"><h3 class="font-semibold mb-3" style="color: var(--color-text);">Settings</h3>';
-        html += '<div class="flex gap-2 mb-4"><button onclick="window.app.settingsSection=\'accounts\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='accounts'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='accounts'?'var(--color-primary-text)':'var(--color-text)') + ';">Accounts</button>';
+        html += '<div class="flex gap-2 mb-4 flex-wrap"><button onclick="window.app.settingsSection=\'accounts\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='accounts'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='accounts'?'var(--color-primary-text)':'var(--color-text)') + ';">Accounts</button>';
         html += '<button onclick="window.app.settingsSection=\'categories\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='categories'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='categories'?'var(--color-primary-text)':'var(--color-text)') + ';">Categories</button>';
+        html += '<button onclick="window.app.settingsSection=\'income\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='income'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='income'?'var(--color-primary-text)':'var(--color-text)') + ';">Income</button>';
+        html += '<button onclick="window.app.settingsSection=\'tasks\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='tasks'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='tasks'?'var(--color-primary-text)':'var(--color-text)') + ';">Monthly Tasks</button>';
         html += '<button onclick="window.app.exportCSV()" class="px-3 py-1 rounded-full text-sm" style="background-color: var(--color-bg); color: var(--color-text);">📥 Export CSV</button></div>';
 
         if (this.settingsSection === 'accounts') {
@@ -426,13 +476,22 @@ class MoneyTracker {
                 html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + a.type + ', starts ' + this.fmt(a.startingBalance) + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingAccount) html += '<button onclick="window.app.toggleAddAccount()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account</button>';
-        } else {
+        } else if (this.settingsSection === 'categories') {
             if (this.addingCategory) html += this.renderCategoryForm(null);
             this.categories.forEach(c => {
                 if (this.editingCategory === c.id) { html += this.renderCategoryForm(c); return; }
-                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + c.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + c.type + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditCategory(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteCategory(\'' + c.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
+                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + c.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.categoryGroup(c) + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditCategory(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteCategory(\'' + c.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingCategory) html += '<button onclick="window.app.toggleAddCategory()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Category</button>';
+        } else if (this.settingsSection === 'income') {
+            html += this.renderIncomeSettings();
+        } else if (this.settingsSection === 'tasks') {
+            if (this.addingTask) html += this.renderTaskForm(null);
+            this.tasks.forEach((t, idx) => {
+                if (this.editingTask === t.id) { html += this.renderTaskForm(t); return; }
+                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span class="text-xs" style="color: var(--color-text-muted);">' + (idx+1) + '.</span> <span style="color: var(--color-text);">' + t.text + '</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditTask(\'' + t.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteTask(\'' + t.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
+            });
+            if (!this.addingTask) html += '<button onclick="window.app.toggleAddTask()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Monthly Task</button>';
         }
         html += '<button onclick="window.app.toggleSettings()" class="w-full mt-4 py-2 rounded-lg" style="background-color: var(--color-secondary); color: var(--color-text);">Close Settings</button></div>';
         return html;
@@ -447,12 +506,26 @@ class MoneyTracker {
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
+    renderIncomeSettings() {
+        let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
+        html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Salary (monthly, £)</p>';
+        html += '<input id="inc_salary" type="number" step="0.01" placeholder="e.g. 2500" value="' + (this.income.salary || '') + '" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">';
+        html += '<label class="flex items-center gap-2 mb-3" style="color: var(--color-text);"><input id="inc_other_toggle" type="checkbox" ' + (this.otherIncomeUIEnabled ? 'checked' : '') + ' onchange="window.app.toggleOtherIncomeUI(this.checked)"> Other income?</label>';
+        if (this.otherIncomeUIEnabled) {
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Other income (monthly, £)</p>';
+            html += '<input id="inc_other_amount" type="number" step="0.01" placeholder="e.g. 200" value="' + (this.income.otherIncomeAmount || '') + '" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">';
+        }
+        html += '<button onclick="window.app.saveIncomeSettings(document.getElementById(\'inc_salary\').value, document.getElementById(\'inc_other_toggle\').checked, ' + (this.otherIncomeUIEnabled ? "document.getElementById('inc_other_amount').value" : '0') + ')" class="w-full py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '</div>';
+        return html;
+    }
     renderCategoryForm(c) {
         const isEdit = !!c;
         let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
         html += '<input id="ca_name" placeholder="Category name" value="' + (c?c.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<select id="ca_type" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="expense"' + (c && c.type==='expense'?' selected':'') + '>Expense</option><option value="income"' + (c && c.type==='income'?' selected':'') + '>Income</option></select>';
-        html += '<div class="flex gap-2"><button onclick="window.app.saveCategory(' + (isEdit?"'"+c.id+"'":'null') + ', document.getElementById(\'ca_name\').value, document.getElementById(\'ca_type\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Group</p>';
+        html += '<select id="ca_group" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="essential"' + (c && this.categoryGroup(c)==='essential'?' selected':'') + '>Essential</option><option value="saving"' + (c && this.categoryGroup(c)==='saving'?' selected':'') + '>Saving</option><option value="spending"' + (!c || this.categoryGroup(c)==='spending'?' selected':'') + '>Spending</option></select>';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveCategory(' + (isEdit?"'"+c.id+"'":'null') + ', document.getElementById(\'ca_name\').value, document.getElementById(\'ca_group\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditCategory(\''+c.id+'\')':'toggleAddCategory()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
@@ -466,8 +539,8 @@ class MoneyTracker {
         else if (this.currentTab === 'tracking') content = this.renderTrackingTab();
         else if (this.currentTab === 'reporting') content = this.renderReportingTab();
 
-        const addAction = this.currentTab === 'tasks' ? 'window.app.toggleAddTask()' : (this.currentTab === 'tracking' ? 'window.app.toggleAddTransaction()' : 'null');
-        const showAddBtn = this.currentTab === 'tasks' || this.currentTab === 'tracking';
+        const addAction = this.currentTab === 'tracking' ? 'window.app.toggleAddTransaction()' : 'null';
+        const showAddBtn = this.currentTab === 'tracking';
 
         const tabs = [['planning','Planning'],['tasks','Monthly Tasks'],['tracking','Tracking'],['reporting','Reporting']];
         let tabsHtml = tabs.map(([key,label]) => '<button onclick="window.app.currentTab = \'' + key + '\'; window.app.render()" class="py-3 px-4 font-medium text-sm whitespace-nowrap" style="color: ' + (this.currentTab===key?'var(--color-primary)':'var(--color-text-muted)') + '; border-bottom: 2px solid ' + (this.currentTab===key?'var(--color-primary)':'transparent') + ';">' + label + '</button>').join('');
