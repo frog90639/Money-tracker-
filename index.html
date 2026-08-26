@@ -41,12 +41,13 @@ class MoneyTracker {
         this.budgets = data?.budgets || [];
         this.tasks = data?.tasks || [];
         this.income = data?.income || { salary: 0, otherIncomeEnabled: false, otherIncomeAmount: 0 };
-        this.groupTargets = data?.groupTargets || { essential: 50, saving: 20, spending: 30 };
+        this.groupTargets = data?.groupTargets || { essential: 50, saving: 30, spending: 20 };
         this.currentTab = 'planning';
         this.showSettings = false;
         this.settingsSection = 'accounts';
         this.addingAccount = false;
         this.editingAccount = null;
+        this.accountFormCategoryUI = '';
         this.addingAccountCategory = false;
         this.editingAccountCategory = null;
         this.addingCategory = false;
@@ -61,7 +62,18 @@ class MoneyTracker {
         this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
         this.trackingMonth = this.monthKey();
         this.migrateLegacyIncomeCategories();
+        this.migrateDefaultGroupTargets(data);
         this.render();
+    }
+    // If the user never customised their Planning Targets (still on the old
+    // 50/20/30 default), move them onto the new 50/30/20 default.
+    migrateDefaultGroupTargets(data) {
+        if (!data || !data.groupTargets) return;
+        const gt = data.groupTargets;
+        if (gt.essential === 50 && gt.saving === 20 && gt.spending === 30) {
+            this.groupTargets = { essential: 50, saving: 30, spending: 20 };
+            this.saveData();
+        }
     }
     // Removes old "Salary" / "Other Income" categories left over from earlier versions
     // of this app, where income lived as a category instead of a Settings > Income field.
@@ -124,16 +136,24 @@ class MoneyTracker {
         return latest ? latest.balance : (parseFloat(acc.startingBalance) || 0);
     }
     accountCategoryName(catId) { const c = this.accountCategories.find(x => x.id === catId); return c ? c.name : 'Uncategorised'; }
-    toggleAddAccount() { this.addingAccount = !this.addingAccount; this.editingAccount = null; this.render(); }
-    toggleEditAccount(id) { this.editingAccount = this.editingAccount === id ? null : id; this.render(); }
-    saveAccount(id, name, categoryId, startingBalance) {
+    isISACategoryId(catId) { const c = this.accountCategories.find(x => x.id === catId); return !!(c && /isa/i.test(c.name.trim())); }
+    isaTypeLabel(isaType) { return isaType === 'stocks_and_shares' ? 'Stocks and Shares' : 'Cash'; }
+    toggleAddAccount() { this.addingAccount = !this.addingAccount; this.editingAccount = null; this.accountFormCategoryUI = ''; this.render(); }
+    toggleEditAccount(id) {
+        this.editingAccount = this.editingAccount === id ? null : id;
+        if (this.editingAccount) { const a = this.accounts.find(x => x.id === id); this.accountFormCategoryUI = a ? a.categoryId : ''; }
+        this.render();
+    }
+    setAccountFormCategory(categoryId) { this.accountFormCategoryUI = categoryId; this.render(); }
+    saveAccount(id, name, categoryId, startingBalance, isaType) {
         if (!name) return;
+        const isISA = this.isISACategoryId(categoryId);
         if (id) {
             const a = this.accounts.find(x => x.id === id);
-            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; }
+            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; }
             this.editingAccount = null;
         } else {
-            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0 });
+            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined });
             this.addingAccount = false;
         }
         this.saveData(); this.render();
@@ -422,7 +442,7 @@ class MoneyTracker {
     }
     renderPlanningTab() {
         const totalIncome = this.totalIncome();
-        let html = '<p class="text-sm mb-4" style="color: var(--color-text-muted);">Set a monthly budget target for each category, then hit Save. Actuals below reflect ' + this.monthLabel(this.monthKey()) + '.</p>';
+        let html = '<p class="text-sm mb-4" style="color: var(--color-text-muted);">Check your amounts for each category then hit Save.</p>';
         if (totalIncome === 0) html += '<p class="text-sm mb-4 p-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Set your salary in ⚙️ Settings → Income to see each section&#8217;s share of income.</p>';
 
         const groups = [['essential','Essentials'],['saving','Savings'],['spending','Spending']];
@@ -501,7 +521,7 @@ class MoneyTracker {
         const diff = entry ? entry.balance - baseline : null;
         const tracksInput = this.accountTracksInput(a.id);
         let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-        html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span></div></div>';
+        html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span>' + (a.isaType ? ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.isaTypeLabel(a.isaType) + ')</span>' : '') + '</div></div>';
         html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
         if (tracksInput) {
             html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Put in £</span><input id="ti_' + a.id + '" type="number" step="0.01" value="' + (entry && entry.input !== undefined ? entry.input : '') + '" placeholder="0.00" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
@@ -631,7 +651,7 @@ class MoneyTracker {
             if (this.addingAccount) html += this.renderAccountForm(null);
             this.accounts.forEach(a => {
                 if (this.editingAccount === a.id) { html += this.renderAccountForm(a); return; }
-                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ', opens ' + this.fmt(a.startingBalance) + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
+                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + (a.isaType ? ' · ' + this.isaTypeLabel(a.isaType) : '') + ', opens ' + this.fmt(a.startingBalance) + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingAccount) html += '<button onclick="window.app.toggleAddAccount()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account</button>';
         } else if (this.settingsSection === 'accountCategories') {
@@ -663,16 +683,23 @@ class MoneyTracker {
     }
     renderAccountForm(a) {
         const isEdit = !!a;
+        const categoryUI = this.accountFormCategoryUI !== undefined && this.accountFormCategoryUI !== '' ? this.accountFormCategoryUI : (a ? a.categoryId : (this.accountCategories[0] ? this.accountCategories[0].id : ''));
         let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
         html += '<input id="ac_name" placeholder="Account name" value="' + (a?a.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         if (this.accountCategories.length === 0) {
             html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Add an account category first in Settings → Account Categories.</p>';
             html += '<input type="hidden" id="ac_category" value="">';
         } else {
-            html += '<select id="ac_category" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">' + this.accountCategories.map(c => '<option value="' + c.id + '"' + (a && a.categoryId===c.id?' selected':'') + '>' + c.name + '</option>').join('') + '</select>';
+            html += '<select id="ac_category" onchange="window.app.setAccountFormCategory(this.value)" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">' + this.accountCategories.map(c => '<option value="' + c.id + '"' + (categoryUI===c.id?' selected':'') + '>' + c.name + '</option>').join('') + '</select>';
+        }
+        let isaTypeArg = 'null';
+        if (this.isISACategoryId(categoryUI)) {
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">ISA type</p>';
+            html += '<select id="ac_isatype" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="cash"' + (a && a.isaType==='cash'?' selected':'') + '>Cash</option><option value="stocks_and_shares"' + (a && a.isaType==='stocks_and_shares'?' selected':'') + '>Stocks and Shares</option></select>';
+            isaTypeArg = "document.getElementById('ac_isatype').value";
         }
         html += '<input id="ac_start" type="number" step="0.01" placeholder="Opening balance £" value="' + (a?a.startingBalance:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
