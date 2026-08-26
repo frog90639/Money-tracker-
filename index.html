@@ -25,11 +25,6 @@
         }
         * { font-family: 'Poppins', sans-serif; }
         body { background-color: var(--color-bg); }
-        .swipe-item { position: relative; overflow: hidden; }
-        .swipe-item-content { display: flex; transition: transform 0.3s ease-out; touch-action: pan-y; }
-        .swipe-item.swiped .swipe-item-content { transform: translateX(calc(0px - 60px)); }
-        .swipe-delete { position: absolute; right: 0; top: 0; bottom: 0; width: 60px; background-color: var(--color-error); display: none; align-items: center; justify-content: center; color: white; cursor: pointer; }
-        .swipe-item.swiped .swipe-delete { display: flex; }
         input, select, textarea { font-family: 'Poppins', sans-serif; }
     </style>
 </head>
@@ -40,8 +35,9 @@ class MoneyTracker {
     constructor() {
         const data = this.loadData();
         this.accounts = data?.accounts || [];
+        this.accountCategories = data?.accountCategories || this.defaultAccountCategories();
         this.categories = data?.categories || this.defaultCategories();
-        this.transactions = data?.transactions || [];
+        this.monthlyBalances = data?.monthlyBalances || [];
         this.budgets = data?.budgets || [];
         this.tasks = data?.tasks || [];
         this.income = data?.income || { salary: 0, otherIncomeEnabled: false, otherIncomeAmount: 0 };
@@ -50,19 +46,16 @@ class MoneyTracker {
         this.settingsSection = 'accounts';
         this.addingAccount = false;
         this.editingAccount = null;
+        this.addingAccountCategory = false;
+        this.editingAccountCategory = null;
         this.addingCategory = false;
         this.editingCategory = null;
         this.addingTask = false;
         this.editingTask = null;
-        this.addingTransaction = false;
-        this.editingTransaction = null;
-        this.txnFilterAccount = 'all';
-        this.txnFilterCategory = 'all';
-        this.txnFilterType = 'all';
-        this.searchText = '';
         this.editingBudget = null;
         this.expandedGroups = { essential: false, saving: false, spending: false };
         this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
+        this.trackingMonth = this.monthKey();
         this.migrateLegacyIncomeCategories();
         this.render();
     }
@@ -75,8 +68,6 @@ class MoneyTracker {
         if (this.categories.length !== before) {
             const remainingIds = new Set(this.categories.map(c => c.id));
             this.budgets = this.budgets.filter(b => remainingIds.has(b.categoryId));
-            this.transactions.forEach(t => { if (t.categoryId && !remainingIds.has(t.categoryId)) t.categoryId = ''; });
-            this.tasks.forEach(t => { if (t.categoryId && !remainingIds.has(t.categoryId)) t.categoryId = ''; });
             this.saveData();
         }
     }
@@ -92,58 +83,88 @@ class MoneyTracker {
             { id: 'c_other', name: 'Other', group: 'spending' }
         ];
     }
+    defaultAccountCategories() {
+        return [
+            { id: 'ac_bank', name: 'Bank' },
+            { id: 'ac_savings', name: 'Savings' },
+            { id: 'ac_investment', name: 'Investment' },
+            { id: 'ac_pension', name: 'Pension' },
+            { id: 'ac_property', name: 'Property' },
+            { id: 'ac_other', name: 'Other' }
+        ];
+    }
     categoryGroup(c) { return c.group || 'spending'; }
     loadData() { try { return JSON.parse(localStorage.getItem('moneyTrackerData')); } catch(e) { return null; } }
-    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, categories: this.categories, transactions: this.transactions, budgets: this.budgets, tasks: this.tasks, income: this.income})); } catch(e) {} }
+    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income})); } catch(e) {} }
     uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
     fmt(n) { const v = isNaN(n) ? 0 : n; return '£' + v.toFixed(2); }
+    fmtSigned(n) { const v = isNaN(n) ? 0 : n; return (v >= 0 ? '+' : '−') + '£' + Math.abs(v).toFixed(2); }
     monthKey(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
     monthLabel(key) { const [y,m] = key.split('-'); const d = new Date(parseInt(y), parseInt(m)-1, 1); return d.toLocaleString('en-GB', { month: 'long', year: 'numeric' }); }
-    initSwipeHandlers() {
-        setTimeout(() => {
-            document.querySelectorAll('[data-swipe-item]').forEach(el => {
-                let touchStartX = 0, touchEndX = 0;
-                el.addEventListener('touchstart', (e) => { touchStartX = e.changedTouches[0].screenX; });
-                el.addEventListener('touchend', (e) => {
-                    touchEndX = e.changedTouches[0].screenX;
-                    if (touchStartX - touchEndX > 50) el.classList.add('swiped');
-                    else if (touchEndX - touchStartX > 50) el.classList.remove('swiped');
-                });
-            });
-        }, 100);
-    }
+    shiftMonthKey(mk, delta) { const [y,m] = mk.split('-').map(Number); const d = new Date(y, (m-1)+delta, 1); return this.monthKey(d); }
 
     // ---------- ACCOUNTS ----------
+    entryAt(accountId, mk) { return this.monthlyBalances.find(e => e.accountId === accountId && e.monthKey === mk) || null; }
+    latestEntryBefore(accountId, mk) {
+        const entries = this.monthlyBalances.filter(e => e.accountId === accountId && e.monthKey < mk).sort((a,b) => a.monthKey.localeCompare(b.monthKey));
+        return entries.length ? entries[entries.length-1] : null;
+    }
+    latestEntry(accountId) {
+        const entries = this.monthlyBalances.filter(e => e.accountId === accountId).sort((a,b) => a.monthKey.localeCompare(b.monthKey));
+        return entries.length ? entries[entries.length-1] : null;
+    }
     accountBalance(accId) {
         const acc = this.accounts.find(a => a.id === accId);
         if (!acc) return 0;
-        let bal = parseFloat(acc.startingBalance) || 0;
-        this.transactions.filter(t => t.accountId === accId).forEach(t => {
-            bal += (t.type === 'income' ? 1 : -1) * (parseFloat(t.amount) || 0);
-        });
-        return bal;
+        const latest = this.latestEntry(accId);
+        return latest ? latest.balance : (parseFloat(acc.startingBalance) || 0);
     }
+    accountCategoryName(catId) { const c = this.accountCategories.find(x => x.id === catId); return c ? c.name : 'Uncategorised'; }
     toggleAddAccount() { this.addingAccount = !this.addingAccount; this.editingAccount = null; this.render(); }
     toggleEditAccount(id) { this.editingAccount = this.editingAccount === id ? null : id; this.render(); }
-    saveAccount(id, name, type, startingBalance) {
+    saveAccount(id, name, categoryId, startingBalance) {
         if (!name) return;
         if (id) {
             const a = this.accounts.find(x => x.id === id);
-            if (a) { a.name = name; a.type = type; a.startingBalance = parseFloat(startingBalance) || 0; }
+            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; }
             this.editingAccount = null;
         } else {
-            this.accounts.push({ id: this.uid(), name, type, startingBalance: parseFloat(startingBalance) || 0 });
+            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0 });
             this.addingAccount = false;
         }
         this.saveData(); this.render();
     }
     deleteAccount(id) {
-        if (!confirm('Delete this account? Transactions linked to it will remain but show as unassigned.')) return;
+        if (!confirm('Delete this account? Its monthly balance history will also be removed.')) return;
         this.accounts = this.accounts.filter(a => a.id !== id);
+        this.monthlyBalances = this.monthlyBalances.filter(e => e.accountId !== id);
         this.saveData(); this.render();
     }
 
-    // ---------- CATEGORIES ----------
+    // ---------- ACCOUNT CATEGORIES ----------
+    toggleAddAccountCategory() { this.addingAccountCategory = !this.addingAccountCategory; this.editingAccountCategory = null; this.render(); }
+    toggleEditAccountCategory(id) { this.editingAccountCategory = this.editingAccountCategory === id ? null : id; this.render(); }
+    saveAccountCategory(id, name) {
+        if (!name) return;
+        if (id) {
+            const c = this.accountCategories.find(x => x.id === id);
+            if (c) c.name = name;
+            this.editingAccountCategory = null;
+        } else {
+            this.accountCategories.push({ id: this.uid(), name });
+            this.addingAccountCategory = false;
+        }
+        this.saveData(); this.render();
+    }
+    deleteAccountCategory(id) {
+        if (!confirm('Delete this account category? Accounts using it will become uncategorised.')) return;
+        this.accountCategories = this.accountCategories.filter(c => c.id !== id);
+        this.accounts.forEach(a => { if (a.categoryId === id) a.categoryId = ''; });
+        if (this.editingAccountCategory === id) this.editingAccountCategory = null;
+        this.saveData(); this.render();
+    }
+
+    // ---------- SPENDING CATEGORIES ----------
     toggleAddCategory() { this.addingCategory = !this.addingCategory; this.editingCategory = null; this.render(); }
     toggleEditCategory(id) { this.editingCategory = this.editingCategory === id ? null : id; this.render(); }
     saveCategory(id, name, group) {
@@ -162,11 +183,8 @@ class MoneyTracker {
         if (!confirm('Delete this category? Budgets for it will also be removed.')) return;
         this.categories = this.categories.filter(c => c.id !== id);
         this.budgets = this.budgets.filter(b => b.categoryId !== id);
-        this.transactions.forEach(t => { if (t.categoryId === id) t.categoryId = ''; });
-        this.tasks.forEach(t => { if (t.categoryId === id) t.categoryId = ''; });
         if (this.editingBudget === id) this.editingBudget = null;
         if (this.editingCategory === id) this.editingCategory = null;
-        if (this.txnFilterCategory === id) this.txnFilterCategory = 'all';
         this.saveData(); this.render();
     }
 
@@ -191,11 +209,6 @@ class MoneyTracker {
         if (!b) { b = { categoryId, monthlyAmount: amt }; this.budgets.push(b); }
         else { b.monthlyAmount = amt; }
         this.saveData(); this.render();
-    }
-    actualForCategoryThisMonth(categoryId) {
-        const mk = this.monthKey();
-        return this.transactions.filter(t => t.categoryId === categoryId && this.monthKey(new Date(t.date)) === mk)
-            .reduce((s,t) => s + (parseFloat(t.amount) || 0), 0);
     }
 
     // ---------- TASKS (Monthly recurring) ----------
@@ -235,61 +248,58 @@ class MoneyTracker {
         else t.paidMonths[mk] = true;
         this.saveData(); this.render();
     }
+    resetMonthlyTasks() {
+        if (this.tasks.length === 0) return;
+        if (!confirm('Reset all monthly tasks for ' + this.monthLabel(this.monthKey()) + '? This will untick everything for this month.')) return;
+        const mk = this.monthKey();
+        this.tasks.forEach(t => { if (t.paidMonths) delete t.paidMonths[mk]; });
+        this.saveData(); this.render();
+    }
 
-    // ---------- TRANSACTIONS (Tracking) ----------
-    toggleAddTransaction() { this.addingTransaction = !this.addingTransaction; this.editingTransaction = null; this.render(); }
-    toggleEditTransaction(id) { this.editingTransaction = this.editingTransaction === id ? null : id; this.render(); }
-    saveTransaction(id, date, accountId, categoryId, type, amount, description, notes) {
-        if (!date || !accountId || !amount) return;
-        if (id) {
-            const t = this.transactions.find(x => x.id === id);
-            if (t) { t.date = date; t.accountId = accountId; t.categoryId = categoryId; t.type = type; t.amount = parseFloat(amount) || 0; t.description = description; t.notes = notes; }
-            this.editingTransaction = null;
-        } else {
-            this.transactions.push({ id: this.uid(), date, accountId, categoryId, type, amount: parseFloat(amount) || 0, description, notes });
-            this.addingTransaction = false;
-        }
+    // ---------- TRACKING (monthly account balances) ----------
+    shiftTrackingMonth(delta) { this.trackingMonth = this.shiftMonthKey(this.trackingMonth, delta); this.render(); }
+    saveMonthlyBalance(accountId, mk, balanceStr) {
+        const balance = parseFloat(balanceStr);
+        if (isNaN(balance)) return;
+        let entry = this.entryAt(accountId, mk);
+        if (entry) entry.balance = balance;
+        else this.monthlyBalances.push({ id: this.uid(), accountId, monthKey: mk, balance });
         this.saveData(); this.render();
-    }
-    deleteTransaction(id) {
-        this.transactions = this.transactions.filter(t => t.id !== id);
-        this.saveData(); this.render();
-    }
-    filteredTransactions() {
-        return this.transactions.filter(t => {
-            if (this.txnFilterAccount !== 'all' && t.accountId !== this.txnFilterAccount) return false;
-            if (this.txnFilterCategory !== 'all' && t.categoryId !== this.txnFilterCategory) return false;
-            if (this.txnFilterType !== 'all' && t.type !== this.txnFilterType) return false;
-            if (this.searchText && !(t.description || '').toLowerCase().includes(this.searchText.toLowerCase())) return false;
-            return true;
-        }).sort((a,b) => new Date(b.date) - new Date(a.date));
     }
 
     // ---------- REPORTING ----------
     totalBalance() { return this.accounts.reduce((s,a) => s + this.accountBalance(a.id), 0); }
-    monthTotals() {
+    monthlyChangeSummary() {
         const mk = this.monthKey();
-        const txns = this.transactions.filter(t => this.monthKey(new Date(t.date)) === mk);
-        const income = txns.filter(t => t.type === 'income').reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
-        const expense = txns.filter(t => t.type === 'expense').reduce((s,t) => s + (parseFloat(t.amount)||0), 0);
-        return { income, expense, net: income - expense };
-    }
-    topCategoriesThisMonth() {
-        const mk = this.monthKey();
-        const map = {};
-        this.transactions.filter(t => t.type === 'expense' && this.monthKey(new Date(t.date)) === mk).forEach(t => {
-            const cat = this.categories.find(c => c.id === t.categoryId);
-            const name = cat ? cat.name : 'Uncategorised';
-            map[name] = (map[name] || 0) + (parseFloat(t.amount)||0);
+        let totalChange = 0, recordedCount = 0;
+        this.accounts.forEach(a => {
+            const entry = this.entryAt(a.id, mk);
+            if (!entry) return;
+            const prev = this.latestEntryBefore(a.id, mk);
+            const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
+            totalChange += entry.balance - baseline;
+            recordedCount++;
         });
-        return Object.entries(map).map(([name,spent]) => ({name,spent})).sort((a,b) => b.spent - a.spent).slice(0,5);
+        return { totalChange, recordedCount };
+    }
+    biggestChangesThisMonth() {
+        const mk = this.monthKey();
+        const rows = [];
+        this.accounts.forEach(a => {
+            const entry = this.entryAt(a.id, mk);
+            if (!entry) return;
+            const prev = this.latestEntryBefore(a.id, mk);
+            const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
+            rows.push({ name: a.name, change: entry.balance - baseline });
+        });
+        return rows.sort((a,b) => Math.abs(b.change) - Math.abs(a.change)).slice(0,5);
     }
     exportCSV() {
-        let csv = 'Date,Account,Category,Type,Amount,Description,Notes\n';
-        this.transactions.forEach(t => {
-            const acc = this.accounts.find(a => a.id === t.accountId);
-            const cat = this.categories.find(c => c.id === t.categoryId);
-            const row = [t.date, acc?acc.name:'', cat?cat.name:'', t.type, t.amount, t.description||'', t.notes||''];
+        let csv = 'Month,Account,Account Category,Balance\n';
+        this.monthlyBalances.slice().sort((a,b) => a.monthKey.localeCompare(b.monthKey) || a.accountId.localeCompare(b.accountId)).forEach(e => {
+            const acc = this.accounts.find(a => a.id === e.accountId);
+            const catName = acc ? this.accountCategoryName(acc.categoryId) : '';
+            const row = [e.monthKey, acc?acc.name:'', catName, e.balance];
             csv += row.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',') + '\n';
         });
         const blob = new Blob([csv], { type: 'text/csv' });
@@ -359,13 +369,6 @@ class MoneyTracker {
         });
         return html;
     }
-    resetMonthlyTasks() {
-        if (this.tasks.length === 0) return;
-        if (!confirm('Reset all monthly tasks for ' + this.monthLabel(this.monthKey()) + '? This will untick everything for this month.')) return;
-        const mk = this.monthKey();
-        this.tasks.forEach(t => { if (t.paidMonths) delete t.paidMonths[mk]; });
-        this.saveData(); this.render();
-    }
     renderTaskForm(t) {
         const isEdit = !!t;
         const currentIdx = isEdit ? this.tasks.findIndex(x => x.id === t.id) : -1;
@@ -384,76 +387,59 @@ class MoneyTracker {
 
     // ---------- RENDER: TRACKING ----------
     renderTrackingTab() {
-        let html = '<div class="mb-3"><input type="text" placeholder="Search description..." value="' + this.searchText + '" oninput="window.app.searchText=this.value; window.app.render()" class="w-full px-3 py-2 rounded border" style="border-color: var(--color-border);"></div>';
-        html += '<div class="grid grid-cols-3 gap-2 mb-4">';
-        html += '<select onchange="window.app.txnFilterAccount=this.value; window.app.render()" class="px-2 py-2 rounded border text-sm" style="border-color: var(--color-border);"><option value="all">All accounts</option>' + this.accounts.map(a => '<option value="' + a.id + '"' + (this.txnFilterAccount===a.id?' selected':'') + '>' + a.name + '</option>').join('') + '</select>';
-        html += '<select onchange="window.app.txnFilterCategory=this.value; window.app.render()" class="px-2 py-2 rounded border text-sm" style="border-color: var(--color-border);"><option value="all">All categories</option>' + this.categories.map(c => '<option value="' + c.id + '"' + (this.txnFilterCategory===c.id?' selected':'') + '>' + c.name + '</option>').join('') + '</select>';
-        html += '<select onchange="window.app.txnFilterType=this.value; window.app.render()" class="px-2 py-2 rounded border text-sm" style="border-color: var(--color-border);"><option value="all">All types</option><option value="income"' + (this.txnFilterType==='income'?' selected':'') + '>Income</option><option value="expense"' + (this.txnFilterType==='expense'?' selected':'') + '>Expense</option></select>';
+        const mk = this.trackingMonth;
+        let html = '<div class="flex items-center justify-between mb-4">';
+        html += '<button onclick="window.app.shiftTrackingMonth(-1)" class="w-9 h-9 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">‹</button>';
+        html += '<p class="font-bold" style="color: var(--color-text);">' + this.monthLabel(mk) + '</p>';
+        html += '<button onclick="window.app.shiftTrackingMonth(1)" class="w-9 h-9 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">›</button>';
         html += '</div>';
 
-        if (this.addingTransaction) html += this.renderTransactionForm(null);
-        if (this.accounts.length === 0 && !this.addingTransaction) html += '<p class="text-center py-4 text-sm" style="color: var(--color-text-muted);">Add an account in Settings before logging transactions.</p>';
+        if (this.accounts.length === 0) {
+            html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No accounts yet. Add some in ⚙️ Settings → Accounts.</p>';
+            return html;
+        }
 
-        const txns = this.filteredTransactions();
-        if (txns.length === 0) html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No transactions yet.</p>';
-
-        txns.forEach(t => {
-            if (this.editingTransaction === t.id) { html += this.renderTransactionForm(t); return; }
-            const acc = this.accounts.find(a => a.id === t.accountId);
-            const cat = this.categories.find(c => c.id === t.categoryId);
-            html += '<div class="swipe-item mb-2" data-swipe-item><div class="swipe-item-content"><div class="p-3 rounded-lg border flex-1" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-            html += '<div class="flex items-center justify-between"><div><p class="font-medium" style="color: var(--color-text);">' + (t.description || '(no description)') + '</p>';
-            html += '<p class="text-xs" style="color: var(--color-text-muted);">' + t.date + (acc?' · ' + acc.name:'') + (cat?' · ' + cat.name:'') + '</p></div>';
-            html += '<p class="font-bold" style="color: ' + (t.type === 'income' ? 'var(--color-income)' : 'var(--color-expense)') + ';">' + (t.type === 'income' ? '+' : '−') + this.fmt(t.amount) + '</p></div>';
-            html += '<button onclick="window.app.toggleEditTransaction(\'' + t.id + '\')" class="text-xs px-2 py-1 rounded mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">Edit</button>';
-            html += '</div></div><div class="swipe-delete" onclick="window.app.deleteTransaction(\'' + t.id + '\')">Delete</div></div>';
+        this.accounts.forEach(a => {
+            const entry = this.entryAt(a.id, mk);
+            const prev = this.latestEntryBefore(a.id, mk);
+            const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
+            const diff = entry ? entry.balance - baseline : null;
+            html += '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+            html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ')</span></div></div>';
+            html += '<div class="flex items-center gap-2"><span class="text-xs" style="color: var(--color-text-muted);">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><button onclick="window.app.saveMonthlyBalance(\'' + a.id + '\', \'' + mk + '\', document.getElementById(\'tb_' + a.id + '\').value)" class="text-xs px-3 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button></div>';
+            if (diff !== null) {
+                html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + '</p>';
+            }
+            html += '</div>';
         });
-        return html;
-    }
-    renderTransactionForm(t) {
-        const isEdit = !!t;
-        let html = '<div class="p-4 rounded-lg border mb-3" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-        html += '<div class="grid grid-cols-2 gap-2 mb-2"><button onclick="this.closest(\'div.p-4\').dataset.type=\'expense\'; document.getElementById(\'tx_type_lbl\').innerText=\'Expense\'; document.getElementById(\'tx_type_expense\').style.opacity=1; document.getElementById(\'tx_type_income\').style.opacity=0.4;" id="tx_type_expense" class="py-2 rounded text-white" style="background-color: var(--color-expense);">Expense</button>';
-        html += '<button onclick="this.closest(\'div.p-4\').dataset.type=\'income\'; document.getElementById(\'tx_type_lbl\').innerText=\'Income\'; document.getElementById(\'tx_type_income\').style.opacity=1; document.getElementById(\'tx_type_expense\').style.opacity=0.4;" id="tx_type_income" class="py-2 rounded text-white" style="background-color: var(--color-income); opacity: 0.4;">Income</button></div>';
-        html += '<input type="hidden" id="tx_type_hidden" value="' + (t?t.type:'expense') + '">';
-        html += '<span id="tx_type_lbl" style="display:none;">' + (t && t.type==='income'?'Income':'Expense') + '</span>';
-        html += '<input id="tx_date" type="date" value="' + (t?t.date:new Date().toISOString().slice(0,10)) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<input id="tx_amount" type="number" step="0.01" placeholder="Amount £" value="' + (t?t.amount:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<input id="tx_desc" placeholder="Description" value="' + (t?t.description||'':'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<select id="tx_account" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">' + this.accounts.map(a => '<option value="' + a.id + '"' + (t && t.accountId===a.id?' selected':'') + '>' + a.name + '</option>').join('') + '</select>';
-        html += '<select id="tx_category" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="">No category</option>' + this.categories.map(c => '<option value="' + c.id + '"' + (t && t.categoryId===c.id?' selected':'') + '>' + c.name + ' (' + this.categoryGroup(c) + ')</option>').join('') + '</select>';
-        html += '<textarea id="tx_notes" placeholder="Notes (optional)" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">' + (t?t.notes||'':'') + '</textarea>';
-        const saveTypeExpr = "(document.getElementById('tx_type_income').style.opacity=='1' ? 'income' : 'expense')";
-        html += '<div class="flex gap-2"><button onclick="window.app.saveTransaction(' + (isEdit?"'"+t.id+"'":'null') + ', document.getElementById(\'tx_date\').value, document.getElementById(\'tx_account\').value, document.getElementById(\'tx_category\').value, ' + saveTypeExpr + ', document.getElementById(\'tx_amount\').value, document.getElementById(\'tx_desc\').value, document.getElementById(\'tx_notes\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
-        html += '<button onclick="window.app.' + (isEdit?'toggleEditTransaction(\''+t.id+'\')':'toggleAddTransaction()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div>';
-        html += '<script>(function(){var exp=document.getElementById("tx_type_expense"),inc=document.getElementById("tx_type_income");if("' + (t?t.type:'expense') + '"==="income"){exp.style.opacity=0.4;inc.style.opacity=1;}else{exp.style.opacity=1;inc.style.opacity=0.4;}})();<' + '/script>';
-        html += '</div>';
         return html;
     }
 
     // ---------- RENDER: REPORTING ----------
     renderReportingTab() {
-        const mt = this.monthTotals();
+        const cs = this.monthlyChangeSummary();
         let html = '<p class="text-sm mb-3" style="color: var(--color-text-muted);">' + this.monthLabel(this.monthKey()) + '</p>';
         html += '<div class="grid grid-cols-2 gap-3 mb-4">';
         html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: var(--color-accent); text-transform: uppercase;">Total Balance</p><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmt(this.totalBalance()) + '</p></div>';
-        html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: ' + (mt.net>=0?'var(--color-success)':'var(--color-error)') + '; text-transform: uppercase;">This Month Net</p><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmt(mt.net) + '</p></div>';
-        html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: var(--color-income); text-transform: uppercase;">Income</p><p class="text-xl font-bold" style="color: var(--color-text);">' + this.fmt(mt.income) + '</p></div>';
-        html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: var(--color-expense); text-transform: uppercase;">Expenses</p><p class="text-xl font-bold" style="color: var(--color-text);">' + this.fmt(mt.expense) + '</p></div>';
+        if (cs.recordedCount > 0) {
+            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: ' + (cs.totalChange>=0?'var(--color-success)':'var(--color-error)') + '; text-transform: uppercase;">Change This Month</p><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmtSigned(cs.totalChange) + '</p></div>';
+        } else {
+            html += '<div class="p-4 rounded-lg border flex items-center" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs" style="color: var(--color-text-muted);">No balances recorded yet this month — add them on the Tracking tab.</p></div>';
+        }
         html += '</div>';
 
         html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Accounts</p>';
         if (this.accounts.length === 0) html += '<p style="color: var(--color-text-muted); font-size: 14px;">No accounts yet.</p>';
         this.accounts.forEach((a,idx) => {
-            html += '<div class="flex items-center justify-between pb-2' + (idx < this.accounts.length-1?' border-b':'') + ' mb-2" style="' + (idx < this.accounts.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + a.name + ' <span class="text-xs" style="color: var(--color-text-muted);">(' + a.type + ')</span></span><span class="font-bold" style="color: var(--color-text);">' + this.fmt(this.accountBalance(a.id)) + '</span></div>';
+            html += '<div class="flex items-center justify-between pb-2' + (idx < this.accounts.length-1?' border-b':'') + ' mb-2" style="' + (idx < this.accounts.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + a.name + ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ')</span></span><span class="font-bold" style="color: var(--color-text);">' + this.fmt(this.accountBalance(a.id)) + '</span></div>';
         });
         html += '</div>';
 
-        const top = this.topCategoriesThisMonth();
-        if (top.length > 0) {
-            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Top Spending Categories</p>';
-            top.forEach((c,idx) => {
-                html += '<div class="flex items-center justify-between pb-2' + (idx < top.length-1?' border-b':'') + '" style="' + (idx < top.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + (idx+1) + '. ' + c.name + '</span><span class="font-bold" style="color: var(--color-expense);">' + this.fmt(c.spent) + '</span></div>';
+        const changes = this.biggestChangesThisMonth();
+        if (changes.length > 0) {
+            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Biggest Changes This Month</p>';
+            changes.forEach((c,idx) => {
+                html += '<div class="flex items-center justify-between pb-2' + (idx < changes.length-1?' border-b':'') + '" style="' + (idx < changes.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + c.name + '</span><span class="font-bold" style="color: ' + (c.change>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(c.change) + '</span></div>';
             });
             html += '</div>';
         }
@@ -463,7 +449,9 @@ class MoneyTracker {
     // ---------- RENDER: SETTINGS ----------
     renderSettings() {
         let html = '<div class="max-w-4xl mx-auto px-4 py-4 border-t" style="border-color: var(--color-border); background-color: var(--color-surface);"><h3 class="font-semibold mb-3" style="color: var(--color-text);">Settings</h3>';
-        html += '<div class="flex gap-2 mb-4 flex-wrap"><button onclick="window.app.settingsSection=\'accounts\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='accounts'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='accounts'?'var(--color-primary-text)':'var(--color-text)') + ';">Accounts</button>';
+        html += '<div class="flex gap-2 mb-4 flex-wrap">';
+        html += '<button onclick="window.app.settingsSection=\'accounts\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='accounts'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='accounts'?'var(--color-primary-text)':'var(--color-text)') + ';">Accounts</button>';
+        html += '<button onclick="window.app.settingsSection=\'accountCategories\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='accountCategories'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='accountCategories'?'var(--color-primary-text)':'var(--color-text)') + ';">Account Categories</button>';
         html += '<button onclick="window.app.settingsSection=\'categories\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='categories'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='categories'?'var(--color-primary-text)':'var(--color-text)') + ';">Categories</button>';
         html += '<button onclick="window.app.settingsSection=\'income\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='income'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='income'?'var(--color-primary-text)':'var(--color-text)') + ';">Income</button>';
         html += '<button onclick="window.app.settingsSection=\'tasks\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='tasks'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='tasks'?'var(--color-primary-text)':'var(--color-text)') + ';">Monthly Tasks</button>';
@@ -473,9 +461,16 @@ class MoneyTracker {
             if (this.addingAccount) html += this.renderAccountForm(null);
             this.accounts.forEach(a => {
                 if (this.editingAccount === a.id) { html += this.renderAccountForm(a); return; }
-                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + a.type + ', starts ' + this.fmt(a.startingBalance) + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
+                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ', opens ' + this.fmt(a.startingBalance) + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingAccount) html += '<button onclick="window.app.toggleAddAccount()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account</button>';
+        } else if (this.settingsSection === 'accountCategories') {
+            if (this.addingAccountCategory) html += this.renderAccountCategoryForm(null);
+            this.accountCategories.forEach(c => {
+                if (this.editingAccountCategory === c.id) { html += this.renderAccountCategoryForm(c); return; }
+                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><span style="color: var(--color-text);">' + c.name + '</span><div class="flex gap-1"><button onclick="window.app.toggleEditAccountCategory(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccountCategory(\'' + c.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
+            });
+            if (!this.addingAccountCategory) html += '<button onclick="window.app.toggleAddAccountCategory()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account Category</button>';
         } else if (this.settingsSection === 'categories') {
             if (this.addingCategory) html += this.renderCategoryForm(null);
             this.categories.forEach(c => {
@@ -500,10 +495,23 @@ class MoneyTracker {
         const isEdit = !!a;
         let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
         html += '<input id="ac_name" placeholder="Account name" value="' + (a?a.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<select id="ac_type" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">' + ['Checking','Savings','Credit Card','Cash','Other'].map(ty => '<option' + (a && a.type===ty?' selected':'') + '>' + ty + '</option>').join('') + '</select>';
-        html += '<input id="ac_start" type="number" step="0.01" placeholder="Starting balance £" value="' + (a?a.startingBalance:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_type\').value, document.getElementById(\'ac_start\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        if (this.accountCategories.length === 0) {
+            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Add an account category first in Settings → Account Categories.</p>';
+            html += '<input type="hidden" id="ac_category" value="">';
+        } else {
+            html += '<select id="ac_category" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">' + this.accountCategories.map(c => '<option value="' + c.id + '"' + (a && a.categoryId===c.id?' selected':'') + '>' + c.name + '</option>').join('') + '</select>';
+        }
+        html += '<input id="ac_start" type="number" step="0.01" placeholder="Opening balance £" value="' + (a?a.startingBalance:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
+        return html;
+    }
+    renderAccountCategoryForm(c) {
+        const isEdit = !!c;
+        let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
+        html += '<input id="acc_name" placeholder="Account category name (e.g. Bank, Investment)" value="' + (c?c.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccountCategory(' + (isEdit?"'"+c.id+"'":'null') + ', document.getElementById(\'acc_name\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<button onclick="window.app.' + (isEdit?'toggleEditAccountCategory(\''+c.id+'\')':'toggleAddAccountCategory()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
     renderIncomeSettings() {
@@ -539,16 +547,12 @@ class MoneyTracker {
         else if (this.currentTab === 'tracking') content = this.renderTrackingTab();
         else if (this.currentTab === 'reporting') content = this.renderReportingTab();
 
-        const addAction = this.currentTab === 'tracking' ? 'window.app.toggleAddTransaction()' : 'null';
-        const showAddBtn = this.currentTab === 'tracking';
-
         const tabs = [['planning','Planning'],['tasks','Monthly Tasks'],['tracking','Tracking'],['reporting','Reporting']];
         let tabsHtml = tabs.map(([key,label]) => '<button onclick="window.app.currentTab = \'' + key + '\'; window.app.render()" class="py-3 px-4 font-medium text-sm whitespace-nowrap" style="color: ' + (this.currentTab===key?'var(--color-primary)':'var(--color-text-muted)') + '; border-bottom: 2px solid ' + (this.currentTab===key?'var(--color-primary)':'transparent') + ';">' + label + '</button>').join('');
 
-        const html = '<div style="background-color: var(--color-bg); min-height: 100vh;"><div class="sticky top-0 z-50" style="background-color: var(--color-surface); border-bottom: 1px solid var(--color-border);"><div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between"><h1 class="text-2xl font-bold" style="color: var(--color-text);">💷 Money Tracker</h1><div class="flex gap-2"><button onclick="window.app.toggleSettings()" class="w-10 h-10 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">⚙️</button>' + (showAddBtn ? '<button onclick="' + addAction + '" class="w-10 h-10 rounded-full flex items-center justify-center text-white" style="background-color: var(--color-primary); color: var(--color-primary-text);">+</button>' : '') + '</div></div>' + (this.showSettings ? this.renderSettings() : '') + '<div class="max-w-4xl mx-auto px-4 flex gap-2 border-t overflow-x-auto" style="border-color: var(--color-border);">' + tabsHtml + '</div></div><div class="max-w-4xl mx-auto px-4 py-6 pb-20">' + content + '</div></div>';
+        const html = '<div style="background-color: var(--color-bg); min-height: 100vh;"><div class="sticky top-0 z-50" style="background-color: var(--color-surface); border-bottom: 1px solid var(--color-border);"><div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between"><h1 class="text-2xl font-bold" style="color: var(--color-text);">💷 Money Tracker</h1><div class="flex gap-2"><button onclick="window.app.toggleSettings()" class="w-10 h-10 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">⚙️</button></div></div>' + (this.showSettings ? this.renderSettings() : '') + '<div class="max-w-4xl mx-auto px-4 flex gap-2 border-t overflow-x-auto" style="border-color: var(--color-border);">' + tabsHtml + '</div></div><div class="max-w-4xl mx-auto px-4 py-6 pb-20">' + content + '</div></div>';
 
         document.getElementById('app').innerHTML = html;
-        this.initSwipeHandlers();
     }
 }
 
