@@ -376,6 +376,20 @@ class MoneyTracker {
         });
         return rows.sort((a,b) => Math.abs(b.change) - Math.abs(a.change)).slice(0,5);
     }
+    isaContributionsForTaxYear(startYear) {
+        const months = new Set(this.taxYearMonths(startYear));
+        const isaAccounts = this.accounts.filter(a => this.isISACategoryId(a.categoryId));
+        return isaAccounts.reduce((sum,a) => sum + this.monthlyBalances.filter(e => e.accountId === a.id && months.has(e.monthKey)).reduce((s2,e) => s2 + (parseFloat(e.input) || 0), 0), 0);
+    }
+    savingsRateForTaxYear(startYear) {
+        const cs = this.taxYearChangeSummary(startYear);
+        const annualIncome = this.totalIncome() * 12;
+        if (annualIncome <= 0 || cs.recordedCount === 0) return null;
+        return (cs.totalChange / annualIncome) * 100;
+    }
+    monthlyTotalBalanceSeries(startYear) {
+        return this.taxYearMonths(startYear).map(mk => ({ monthKey: mk, total: this.accounts.reduce((s,a) => s + this.balanceAsOf(a.id, mk), 0) }));
+    }
     allMonthKeysSorted() {
         const s = new Set(this.monthlyBalances.map(e => e.monthKey));
         return Array.from(s).sort();
@@ -639,6 +653,71 @@ class MoneyTracker {
         });
         return html;
     }
+    renderBalanceTrendSection(startYear) {
+        const series = this.monthlyTotalBalanceSeries(startYear);
+        const hasData = series.some(s => s.total !== 0);
+        if (!hasData) return '';
+        const max = Math.max(...series.map(s => s.total), 1);
+        const min = Math.min(...series.map(s => s.total), 0);
+        const range = (max - min) || 1;
+        let html = '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Balance Trend</p>';
+        html += '<div class="flex items-end gap-1" style="height: 80px;">';
+        series.forEach(s => {
+            const heightPct = Math.max(4, ((s.total - min) / range) * 100);
+            html += '<div class="flex-1 flex flex-col items-center justify-end h-full"><div style="width: 100%; height: ' + heightPct + '%; background-color: var(--color-primary); border-radius: 3px 3px 0 0;"></div></div>';
+        });
+        html += '</div>';
+        html += '<div class="flex gap-1 mt-1">';
+        series.forEach(s => { html += '<div class="flex-1 text-center" style="font-size: 9px; color: var(--color-text-muted);">' + this.monthLabel(s.monthKey).slice(0,3) + '</div>'; });
+        html += '</div>';
+        html += '<p class="text-xs mt-2" style="color: var(--color-text-muted);">' + this.fmt(series[0].total) + ' → ' + this.fmt(series[series.length-1].total) + '</p>';
+        html += '</div>';
+        return html;
+    }
+    renderSavingsRateSection(startYear) {
+        const rate = this.savingsRateForTaxYear(startYear);
+        if (rate === null) return '';
+        const target = parseFloat(this.groupTargets.saving) || 0;
+        let html = '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+        html += '<p class="text-xs font-bold mb-1" style="color: var(--color-text-muted); text-transform: uppercase;">Savings Rate</p>';
+        let color = 'var(--color-text)';
+        let targetText = '';
+        if (target > 0) {
+            const distance = Math.abs(rate - target);
+            color = this.colorForTargetDistance(distance);
+            targetText = ' · target ' + target + '%' + (distance <= 2 ? ' ✓' : '');
+        }
+        html += '<p class="text-2xl font-bold" style="color: ' + color + ';">' + rate.toFixed(1) + '%' + targetText + '</p>';
+        html += '<p class="text-xs mt-1" style="color: var(--color-text-muted);">Share of your income kept as balance growth this tax year</p>';
+        html += '</div>';
+        return html;
+    }
+    renderISAAllowanceSection(startYear) {
+        const hasISA = this.accounts.some(a => this.isISACategoryId(a.categoryId));
+        if (!hasISA) return '';
+        const allowance = 20000;
+        const used = this.isaContributionsForTaxYear(startYear);
+        const pct = Math.min(100, (used / allowance) * 100);
+        const color = used > allowance ? 'var(--color-error)' : (pct >= 90 ? 'var(--color-warning)' : 'var(--color-success)');
+        let html = '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+        html += '<p class="text-xs font-bold mb-1" style="color: var(--color-text-muted); text-transform: uppercase;">ISA Allowance</p>';
+        html += '<p class="text-lg font-bold mb-2" style="color: var(--color-text);">' + this.fmt(used) + ' of ' + this.fmt(allowance) + '</p>';
+        html += '<div class="w-full rounded-full h-2" style="background-color: var(--color-border);"><div class="h-2 rounded-full" style="width: ' + pct + '%; background-color: ' + color + ';"></div></div>';
+        html += '</div>';
+        return html;
+    }
+    renderYearOverYearSection(startYear) {
+        const thisYear = this.taxYearChangeSummary(startYear);
+        const lastYear = this.taxYearChangeSummary(startYear - 1);
+        if (thisYear.recordedCount === 0 && lastYear.recordedCount === 0) return '';
+        let html = '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+        html += '<p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Year on Year</p>';
+        html += '<div class="grid grid-cols-2 gap-3">';
+        html += '<div><p class="text-xs" style="color: var(--color-text-muted);">' + this.taxYearLabel(startYear - 1) + '</p><p class="font-bold" style="color: ' + (lastYear.recordedCount>0 ? (lastYear.totalChange>=0?'var(--color-success)':'var(--color-error)') : 'var(--color-text-muted)') + ';">' + (lastYear.recordedCount>0 ? this.fmtSigned(lastYear.totalChange) : '—') + '</p></div>';
+        html += '<div><p class="text-xs" style="color: var(--color-text-muted);">' + this.taxYearLabel(startYear) + '</p><p class="font-bold" style="color: ' + (thisYear.recordedCount>0 ? (thisYear.totalChange>=0?'var(--color-success)':'var(--color-error)') : 'var(--color-text-muted)') + ';">' + (thisYear.recordedCount>0 ? this.fmtSigned(thisYear.totalChange) : '—') + '</p></div>';
+        html += '</div></div>';
+        return html;
+    }
     renderReportingTab() {
         const startYear = this.reportingTaxYear;
         const cs = this.taxYearChangeSummary(startYear);
@@ -655,6 +734,11 @@ class MoneyTracker {
             html += '<div class="p-4 rounded-lg border flex items-center" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs" style="color: var(--color-text-muted);">No balances recorded yet this tax year — add them on the Tracking tab.</p></div>';
         }
         html += '</div>';
+
+        html += this.renderBalanceTrendSection(startYear);
+        html += this.renderSavingsRateSection(startYear);
+        html += this.renderISAAllowanceSection(startYear);
+        html += this.renderYearOverYearSection(startYear);
 
         html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Accounts</p>';
         if (this.accounts.length === 0) html += '<p style="color: var(--color-text-muted); font-size: 14px;">No accounts yet.</p>';
