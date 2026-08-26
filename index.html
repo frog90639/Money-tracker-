@@ -144,14 +144,14 @@ class MoneyTracker {
     // ---------- ACCOUNT CATEGORIES ----------
     toggleAddAccountCategory() { this.addingAccountCategory = !this.addingAccountCategory; this.editingAccountCategory = null; this.render(); }
     toggleEditAccountCategory(id) { this.editingAccountCategory = this.editingAccountCategory === id ? null : id; this.render(); }
-    saveAccountCategory(id, name) {
+    saveAccountCategory(id, name, trackInput) {
         if (!name) return;
         if (id) {
             const c = this.accountCategories.find(x => x.id === id);
-            if (c) c.name = name;
+            if (c) { c.name = name; c.trackInput = !!trackInput; }
             this.editingAccountCategory = null;
         } else {
-            this.accountCategories.push({ id: this.uid(), name });
+            this.accountCategories.push({ id: this.uid(), name, trackInput: !!trackInput });
             this.addingAccountCategory = false;
         }
         this.saveData(); this.render();
@@ -258,13 +258,32 @@ class MoneyTracker {
 
     // ---------- TRACKING (monthly account balances) ----------
     shiftTrackingMonth(delta) { this.trackingMonth = this.shiftMonthKey(this.trackingMonth, delta); this.render(); }
-    saveMonthlyBalance(accountId, mk, balanceStr) {
+    accountTracksInput(accId) {
+        const acc = this.accounts.find(a => a.id === accId);
+        if (!acc) return false;
+        const cat = this.accountCategories.find(c => c.id === acc.categoryId);
+        return !!(cat && cat.trackInput);
+    }
+    saveMonthlyBalance(accountId, mk, balanceStr, inputStr) {
         const balance = parseFloat(balanceStr);
         if (isNaN(balance)) return;
         let entry = this.entryAt(accountId, mk);
-        if (entry) entry.balance = balance;
-        else this.monthlyBalances.push({ id: this.uid(), accountId, monthKey: mk, balance });
+        if (!entry) { entry = { id: this.uid(), accountId, monthKey: mk, balance }; this.monthlyBalances.push(entry); }
+        else entry.balance = balance;
+        if (inputStr !== undefined && inputStr !== null) entry.input = parseFloat(inputStr) || 0;
         this.saveData(); this.render();
+    }
+    totalInputForAccount(accountId) {
+        return this.monthlyBalances.filter(e => e.accountId === accountId).reduce((s,e) => s + (parseFloat(e.input) || 0), 0);
+    }
+    trackedAccountsSummary() {
+        return this.accounts.filter(a => this.accountTracksInput(a.id)).map(a => {
+            const totalInput = this.totalInputForAccount(a.id);
+            const currentBal = this.accountBalance(a.id);
+            const opening = parseFloat(a.startingBalance) || 0;
+            const growth = currentBal - opening - totalInput;
+            return { name: a.name, totalInput, growth, currentBal };
+        });
     }
 
     // ---------- REPORTING ----------
@@ -404,11 +423,22 @@ class MoneyTracker {
             const prev = this.latestEntryBefore(a.id, mk);
             const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
             const diff = entry ? entry.balance - baseline : null;
+            const tracksInput = this.accountTracksInput(a.id);
             html += '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
             html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ')</span></div></div>';
-            html += '<div class="flex items-center gap-2"><span class="text-xs" style="color: var(--color-text-muted);">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><button onclick="window.app.saveMonthlyBalance(\'' + a.id + '\', \'' + mk + '\', document.getElementById(\'tb_' + a.id + '\').value)" class="text-xs px-3 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button></div>';
+            html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
+            if (tracksInput) {
+                html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Put in £</span><input id="ti_' + a.id + '" type="number" step="0.01" value="' + (entry && entry.input !== undefined ? entry.input : '') + '" placeholder="0.00" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
+            }
+            html += '<button onclick="window.app.saveMonthlyBalance(\'' + a.id + '\', \'' + mk + '\', document.getElementById(\'tb_' + a.id + '\').value' + (tracksInput ? ", document.getElementById('ti_" + a.id + "').value" : '') + ')" class="text-xs px-3 py-2 rounded text-white w-full" style="background-color: var(--color-primary);">Save</button>';
             if (diff !== null) {
-                html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + '</p>';
+                if (tracksInput) {
+                    const monthInput = (entry.input !== undefined) ? (parseFloat(entry.input) || 0) : 0;
+                    const growth = diff - monthInput;
+                    html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + ' — ' + this.fmt(monthInput) + ' put in, ' + this.fmtSigned(growth) + ' growth</p>';
+                } else {
+                    html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + '</p>';
+                }
             }
             html += '</div>';
         });
@@ -437,9 +467,18 @@ class MoneyTracker {
 
         const changes = this.biggestChangesThisMonth();
         if (changes.length > 0) {
-            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Biggest Changes This Month</p>';
+            html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Biggest Changes This Month</p>';
             changes.forEach((c,idx) => {
                 html += '<div class="flex items-center justify-between pb-2' + (idx < changes.length-1?' border-b':'') + '" style="' + (idx < changes.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + c.name + '</span><span class="font-bold" style="color: ' + (c.change>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(c.change) + '</span></div>';
+            });
+            html += '</div>';
+        }
+
+        const tracked = this.trackedAccountsSummary();
+        if (tracked.length > 0) {
+            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Contributions & Growth (all-time)</p>';
+            tracked.forEach((t,idx) => {
+                html += '<div class="pb-2' + (idx < tracked.length-1?' border-b mb-2':'') + '" style="' + (idx < tracked.length-1?'border-color: var(--color-border);':'') + '"><p style="color: var(--color-text);">' + t.name + '</p><div class="flex items-center justify-between text-xs" style="color: var(--color-text-muted);"><span>' + this.fmt(t.totalInput) + ' put in</span><span style="color: ' + (t.growth>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(t.growth) + ' growth</span></div></div>';
             });
             html += '</div>';
         }
@@ -468,7 +507,7 @@ class MoneyTracker {
             if (this.addingAccountCategory) html += this.renderAccountCategoryForm(null);
             this.accountCategories.forEach(c => {
                 if (this.editingAccountCategory === c.id) { html += this.renderAccountCategoryForm(c); return; }
-                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><span style="color: var(--color-text);">' + c.name + '</span><div class="flex gap-1"><button onclick="window.app.toggleEditAccountCategory(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccountCategory(\'' + c.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
+                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><span style="color: var(--color-text);">' + c.name + (c.trackInput ? ' <span class="text-xs" style="color: var(--color-text-muted);">(tracks input)</span>' : '') + '</span><div class="flex gap-1"><button onclick="window.app.toggleEditAccountCategory(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccountCategory(\'' + c.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingAccountCategory) html += '<button onclick="window.app.toggleAddAccountCategory()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account Category</button>';
         } else if (this.settingsSection === 'categories') {
@@ -510,7 +549,9 @@ class MoneyTracker {
         const isEdit = !!c;
         let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
         html += '<input id="acc_name" placeholder="Account category name (e.g. Bank, Investment)" value="' + (c?c.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<div class="flex gap-2"><button onclick="window.app.saveAccountCategory(' + (isEdit?"'"+c.id+"'":'null') + ', document.getElementById(\'acc_name\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="acc_trackinput" type="checkbox" ' + (c && c.trackInput ? 'checked' : '') + '> Track amount put in / interest gained for this category</label>';
+        html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Useful for things like ISAs — track deposits separately from balance growth.</p>';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccountCategory(' + (isEdit?"'"+c.id+"'":'null') + ', document.getElementById(\'acc_name\').value, document.getElementById(\'acc_trackinput\').checked)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccountCategory(\''+c.id+'\')':'toggleAddAccountCategory()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
