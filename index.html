@@ -57,6 +57,7 @@ class MoneyTracker {
         this.addingTask = false;
         this.editingTask = null;
         this.editingBudget = null;
+        this.editingGroupTargetsInline = false;
         this.expandedGroups = { essential: false, saving: false, spending: false, tasks: false };
         this.expandedReportCategories = {};
         this.expandedTrackingCategories = {};
@@ -220,15 +221,16 @@ class MoneyTracker {
         this.render();
     }
     setCategoryFormGroup(group) { this.categoryFormGroupUI = group; this.render(); }
-    saveCategory(id, name, group, percentageBased) {
+    saveCategory(id, name, group, percentageBased, splitFurther) {
         if (!name) return;
         const pctBased = (group === 'saving') && !!percentageBased;
+        const splitF = pctBased ? false : !!splitFurther;
         if (id) {
             const c = this.categories.find(x => x.id === id);
-            if (c) { c.name = name; c.group = group || 'spending'; c.percentageBased = pctBased; }
+            if (c) { c.name = name; c.group = group || 'spending'; c.percentageBased = pctBased; c.splitFurther = splitF; }
             this.editingCategory = null;
         } else {
-            this.categories.push({ id: this.uid(), name, group: group || 'spending', percentageBased: pctBased });
+            this.categories.push({ id: this.uid(), name, group: group || 'spending', percentageBased: pctBased, splitFurther: splitF });
             this.addingCategory = false;
             this.expandedGroups[group || 'spending'] = true;
         }
@@ -259,6 +261,14 @@ class MoneyTracker {
         this.groupTargets.spending = parseFloat(spending) || 0;
         this.saveData(); this.render();
     }
+    toggleEditGroupTargetsInline() { this.editingGroupTargetsInline = !this.editingGroupTargetsInline; this.render(); }
+    saveGroupTargetsInline() {
+        const e = document.getElementById('pt_gt_essential').value;
+        const s = document.getElementById('pt_gt_saving').value;
+        const sp = document.getElementById('pt_gt_spending').value;
+        this.editingGroupTargetsInline = false;
+        this.saveGroupTargets(e, s, sp);
+    }
 
     // ---------- BUDGETS (Planning) ----------
     getBudget(categoryId) { return this.budgets.find(b => b.categoryId === categoryId); }
@@ -277,6 +287,30 @@ class MoneyTracker {
         this.editingBudget = null;
         if (!b) { b = { categoryId, monthlyAmount: amt }; this.budgets.push(b); }
         else { b.monthlyAmount = amt; }
+        this.saveData(); this.render();
+    }
+    getSubItems(categoryId) { const b = this.getBudget(categoryId); return (b && b.subItems) || []; }
+    subItemsTotal(categoryId) { return this.getSubItems(categoryId).reduce((s,i) => s + (parseFloat(i.amount) || 0), 0); }
+    addSubItem(categoryId) {
+        let b = this.getBudget(categoryId);
+        if (!b) { b = { categoryId, subItems: [] }; this.budgets.push(b); }
+        if (!b.subItems) b.subItems = [];
+        b.subItems.push({ id: this.uid(), name: '', amount: 0 });
+        this.saveData(); this.render();
+    }
+    deleteSubItem(categoryId, itemId) {
+        const b = this.getBudget(categoryId);
+        if (!b || !b.subItems) return;
+        b.subItems = b.subItems.filter(i => i.id !== itemId);
+        this.saveData(); this.render();
+    }
+    updateSubItemField(categoryId, itemId, field, value) {
+        let b = this.getBudget(categoryId);
+        if (!b) { b = { categoryId, subItems: [] }; this.budgets.push(b); }
+        if (!b.subItems) b.subItems = [];
+        let item = b.subItems.find(i => i.id === itemId);
+        if (!item) { item = { id: itemId, name: '', amount: 0 }; b.subItems.push(item); }
+        if (field === 'amount') item.amount = parseFloat(value) || 0; else item.name = value;
         this.saveData(); this.render();
     }
 
@@ -455,6 +489,81 @@ class MoneyTracker {
         a.href = url; a.download = 'money-tracker-export.csv'; a.click();
         URL.revokeObjectURL(url);
     }
+    availableTaxYears() {
+        const years = new Set(this.allMonthKeysSorted().map(mk => this.taxYearStartForMonthKey(mk)));
+        years.add(this.reportingTaxYear);
+        return Array.from(years).sort((a,b) => b - a);
+    }
+    toggleAllPDFCheckboxes(className, checked) {
+        document.querySelectorAll('.' + className).forEach(el => { el.checked = checked; });
+    }
+    generatePDFReport() {
+        const yearSel = document.getElementById('pdf_year').value;
+        const selectedMonthNums = Array.from(document.querySelectorAll('.pdf-month-checkbox:checked')).map(el => el.dataset.month);
+        const selectedAccountIds = Array.from(document.querySelectorAll('.pdf-account-checkbox:checked')).map(el => el.dataset.accountId);
+        if (selectedMonthNums.length === 0 || selectedAccountIds.length === 0) { alert('Please select at least one month and one account.'); return; }
+
+        let months;
+        if (yearSel === 'all') {
+            months = this.allMonthKeysSorted().filter(mk => selectedMonthNums.includes(mk.split('-')[1]));
+            if (months.length === 0) months = [this.monthKey()];
+        } else {
+            months = this.taxYearMonths(parseInt(yearSel)).filter(mk => selectedMonthNums.includes(mk.split('-')[1]));
+        }
+        const accounts = this.accounts.filter(a => selectedAccountIds.includes(a.id));
+        const periodLabel = yearSel === 'all' ? 'All Years' : 'Tax Year ' + this.taxYearLabel(parseInt(yearSel));
+
+        let rows = '';
+        months.forEach(mk => {
+            let rowTotal = 0;
+            let cells = accounts.map(a => { const v = this.balanceAsOf(a.id, mk); rowTotal += v; return '<td>' + this.fmt(v) + '</td>'; }).join('');
+            rows += '<tr><td>' + this.monthLabel(mk) + '</td>' + cells + '<td><strong>' + this.fmt(rowTotal) + '</strong></td></tr>';
+        });
+        const openingTotal = accounts.reduce((s,a) => s + this.balanceAsOf(a.id, this.shiftMonthKey(months[0], -1)), 0);
+        const closingTotal = accounts.reduce((s,a) => s + this.balanceAsOf(a.id, months[months.length-1]), 0);
+        const netChange = closingTotal - openingTotal;
+
+        const reportHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Money Tracker Report</title><style>' +
+            'body{font-family:Arial,Helvetica,sans-serif;color:#2D3436;padding:24px;} h1{font-size:20px;margin-bottom:4px;} p.meta{color:#636E72;font-size:12px;margin-top:0;} ' +
+            'table{width:100%;border-collapse:collapse;margin-top:16px;font-size:12px;} th,td{border:1px solid #DFE6E9;padding:6px 8px;text-align:right;} th:first-child,td:first-child{text-align:left;} th{background:#F0F7F4;} ' +
+            '.summary{margin-top:16px;font-size:13px;} .summary p{margin:4px 0;} @media print{body{padding:0;}}' +
+            '</style></head><body>' +
+            '<h1>Money Tracker Report</h1>' +
+            '<p class="meta">Generated ' + new Date().toLocaleString('en-GB') + ' · Period: ' + periodLabel + '</p>' +
+            '<div class="summary"><p><strong>Opening total:</strong> ' + this.fmt(openingTotal) + '</p><p><strong>Closing total:</strong> ' + this.fmt(closingTotal) + '</p><p><strong>Net change:</strong> ' + this.fmtSigned(netChange) + '</p></div>' +
+            '<table><thead><tr><th>Month</th>' + accounts.map(a => '<th>' + a.name + '</th>').join('') + '<th>Total</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+            '</body></html>';
+
+        const w = window.open('', '_blank');
+        if (!w) { alert('Please allow pop-ups to generate the PDF report.'); return; }
+        w.document.write(reportHtml);
+        w.document.close();
+        setTimeout(() => { w.print(); }, 300);
+    }
+    renderPDFReportSettings() {
+        const years = this.availableTaxYears();
+        let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
+        html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Year</p>';
+        html += '<select id="pdf_year" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);"><option value="all">All Years</option>' + years.map(y => '<option value="' + y + '">Tax Year ' + this.taxYearLabel(y) + '</option>').join('') + '</select>';
+
+        html += '<div class="flex items-center justify-between mb-1"><p class="text-xs" style="color: var(--color-text-muted);">Months</p><button onclick="window.app.toggleAllPDFCheckboxes(\'pdf-month-checkbox\', true)" class="text-xs underline" style="color: var(--color-accent);">Select all</button></div>';
+        html += '<div class="grid grid-cols-3 gap-1 mb-3">';
+        const monthNames = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
+        const monthNums = ['04','05','06','07','08','09','10','11','12','01','02','03'];
+        monthNums.forEach((mn,idx) => {
+            html += '<label class="flex items-center gap-1 text-xs" style="color: var(--color-text);"><input type="checkbox" class="pdf-month-checkbox" data-month="' + mn + '" checked> ' + monthNames[idx] + '</label>';
+        });
+        html += '</div>';
+
+        html += '<div class="flex items-center justify-between mb-1"><p class="text-xs" style="color: var(--color-text-muted);">Accounts</p><button onclick="window.app.toggleAllPDFCheckboxes(\'pdf-account-checkbox\', true)" class="text-xs underline" style="color: var(--color-accent);">Select all</button></div>';
+        if (this.accounts.length === 0) html += '<p class="text-xs mb-3" style="color: var(--color-text-muted);">No accounts yet.</p>';
+        this.accounts.forEach(a => {
+            html += '<label class="flex items-center gap-2 text-xs mb-1" style="color: var(--color-text);"><input type="checkbox" class="pdf-account-checkbox" data-account-id="' + a.id + '" checked> ' + a.name + '</label>';
+        });
+        html += '<button onclick="window.app.generatePDFReport()" class="w-full py-2 rounded text-white mt-3" style="background-color: var(--color-primary);">Generate PDF Report</button>';
+        html += '</div>';
+        return html;
+    }
 
     // ---------- RENDER: PLANNING ----------
     renderBudgetRow(c) {
@@ -470,6 +579,15 @@ class MoneyTracker {
             } else {
                 html += '<div class="flex items-center gap-2"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(amount) + '</span><span class="text-xs" style="color: var(--color-text-muted);">(' + pct + '%)</span><button onclick="window.app.toggleEditBudget(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit</button></div></div>';
             }
+            html += '</div>';
+        } else if (c.splitFurther) {
+            const subItems = this.getSubItems(c.id);
+            const total = this.subItemsTotal(c.id);
+            html += '<span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(total) + '</span></div>';
+            subItems.forEach(item => {
+                html += '<div class="flex items-center gap-2 mt-2"><input value="' + (item.name||'') + '" placeholder="Item name" onchange="window.app.updateSubItemField(\'' + c.id + '\', \'' + item.id + '\', \'name\', this.value)" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><input type="number" step="0.01" value="' + item.amount + '" placeholder="£" onchange="window.app.updateSubItemField(\'' + c.id + '\', \'' + item.id + '\', \'amount\', this.value)" class="w-20 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><button onclick="window.app.deleteSubItem(\'' + c.id + '\', \'' + item.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-error); color: white;">×</button></div>';
+            });
+            html += '<button onclick="window.app.addSubItem(\'' + c.id + '\')" class="text-xs px-3 py-1 rounded mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add item</button>';
         } else {
             const target = b ? b.monthlyAmount : 0;
             if (isEditing) {
@@ -477,6 +595,7 @@ class MoneyTracker {
             } else {
                 html += '<div class="flex items-center gap-2"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(target) + '</span><button onclick="window.app.toggleEditBudget(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit</button></div></div>';
             }
+            html += '</div>';
         }
         html += '</div>';
         return html;
@@ -485,6 +604,7 @@ class MoneyTracker {
     groupBudgetTotal(key) {
         return this.categories.filter(c => this.categoryGroup(c) === key)
             .reduce((sum, c) => {
+                if (c.splitFurther) return sum + this.subItemsTotal(c.id);
                 const b = this.getBudget(c.id);
                 if (!b) return sum;
                 if (c.percentageBased) return sum + this.totalIncome() * ((parseFloat(b.percentage) || 0) / 100);
@@ -499,11 +619,29 @@ class MoneyTracker {
         const rgb = [0,1,2].map(i => Math.round(green[i] + (red[i]-green[i]) * t));
         return 'rgb(' + rgb.join(',') + ')';
     }
+    totalAllocatedPercent() {
+        if (this.totalIncome() <= 0) return null;
+        const total = ['essential','saving','spending'].reduce((s,key) => s + this.groupBudgetTotal(key), 0);
+        return (total / this.totalIncome()) * 100;
+    }
     renderPlanningTab() {
         const totalIncome = this.totalIncome();
         let html = this.renderTasksSection();
         html += '<p class="text-sm mb-4 mt-4" style="color: var(--color-text-muted);">Check your amounts for each category then hit Save.</p>';
         if (totalIncome === 0) html += '<p class="text-sm mb-4 p-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Set your salary in ⚙️ Settings → Income to see each section&#8217;s share of income.</p>';
+
+        const totalPct = this.totalAllocatedPercent();
+        if (totalPct !== null) {
+            const overBudget = totalPct > 100;
+            const barColor = overBudget ? 'var(--color-error)' : 'var(--color-primary)';
+            html += '<div class="p-3 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+            html += '<div class="flex items-center justify-between mb-1"><span class="text-sm font-bold" style="color: var(--color-text);">Total Allocated</span><span class="text-sm font-bold" style="color: ' + barColor + ';">' + totalPct.toFixed(1) + '% of income</span></div>';
+            html += '<div class="w-full rounded-full h-2" style="background-color: var(--color-border);"><div class="h-2 rounded-full" style="width: ' + Math.min(100, totalPct) + '%; background-color: ' + barColor + ';"></div></div>';
+            if (overBudget) {
+                html += '<p class="text-xs mt-2" style="color: var(--color-error);">⚠️ You have allocated ' + (totalPct - 100).toFixed(1) + '% more than your income covers.</p>';
+            }
+            html += '</div>';
+        }
 
         const groups = [['essential','Essentials'],['saving','Savings'],['spending','Spending']];
         groups.forEach(([key,label]) => {
@@ -534,6 +672,20 @@ class MoneyTracker {
 
         if (this.addingCategory) html += this.renderCategoryForm(null);
         else html += '<button onclick="window.app.toggleAddCategory()" class="w-full py-2 rounded-lg mt-4" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Planning Category</button>';
+
+        html += '<div class="mt-3">';
+        if (this.editingGroupTargetsInline) {
+            html += '<div class="p-3 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+            html += '<p class="text-xs font-semibold mb-2" style="color: var(--color-text);">Essentials / Saving / Spending Targets</p>';
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Essential %</p><input id="pt_gt_essential" type="number" step="1" value="' + this.groupTargets.essential + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Saving %</p><input id="pt_gt_saving" type="number" step="1" value="' + this.groupTargets.saving + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Spending %</p><input id="pt_gt_spending" type="number" step="1" value="' + this.groupTargets.spending + '" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">';
+            html += '<div class="flex gap-2"><button onclick="window.app.saveGroupTargetsInline()" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button><button onclick="window.app.toggleEditGroupTargetsInline()" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div>';
+            html += '</div>';
+        } else {
+            html += '<button onclick="window.app.toggleEditGroupTargetsInline()" class="text-xs px-3 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit Essentials/Saving/Spending targets</button>';
+        }
+        html += '</div>';
         return html;
     }
 
@@ -885,7 +1037,8 @@ class MoneyTracker {
         html += '<button onclick="window.app.settingsSection=\'categories\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='categories'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='categories'?'var(--color-primary-text)':'var(--color-text)') + ';">Planning Categories</button>';
         html += '<button onclick="window.app.settingsSection=\'income\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='income'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='income'?'var(--color-primary-text)':'var(--color-text)') + ';">Income</button>';
         html += '<button onclick="window.app.settingsSection=\'tasks\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='tasks'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='tasks'?'var(--color-primary-text)':'var(--color-text)') + ';">Monthly Tasks</button>';
-        html += '<button onclick="window.app.exportCSV()" class="px-3 py-1 rounded-full text-sm" style="background-color: var(--color-bg); color: var(--color-text);">📥 Export CSV</button></div>';
+        html += '<button onclick="window.app.exportCSV()" class="px-3 py-1 rounded-full text-sm" style="background-color: var(--color-bg); color: var(--color-text);">📥 Export CSV</button>';
+        html += '<button onclick="window.app.settingsSection=\'pdf\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='pdf'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='pdf'?'var(--color-primary-text)':'var(--color-text)') + ';">📄 PDF Report</button></div>';
 
         if (this.settingsSection === 'accounts') {
             if (this.addingAccount) html += this.renderAccountForm(null);
@@ -917,6 +1070,8 @@ class MoneyTracker {
                 html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span class="text-xs" style="color: var(--color-text-muted);">' + (idx+1) + '.</span> <span style="color: var(--color-text);">' + t.text + '</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditTask(\'' + t.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteTask(\'' + t.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingTask) html += '<button onclick="window.app.toggleAddTask()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Monthly Task</button>';
+        } else if (this.settingsSection === 'pdf') {
+            html += this.renderPDFReportSettings();
         }
         html += '<button onclick="window.app.toggleSettings()" class="w-full mt-4 py-2 rounded-lg" style="background-color: var(--color-secondary); color: var(--color-text);">Close Settings</button></div>';
         return html;
@@ -1002,7 +1157,10 @@ class MoneyTracker {
             html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">If yes, you will set a % of income for this category on the Planning tab instead of a fixed amount.</p>';
             pctBasedArg = "document.getElementById('ca_pctbased').checked";
         }
-        html += '<div class="flex gap-2"><button onclick="window.app.saveCategory(' + (isEdit?"'"+c.id+"'":'null') + ', document.getElementById(\'ca_name\').value, document.getElementById(\'ca_group\').value, ' + pctBasedArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="ca_split" type="checkbox" ' + (c && c.splitFurther ? 'checked' : '') + '> Split further?</label>';
+        html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">If yes, this category will hold a list of sub-items on the Planning tab, each with its own amount — the total is the sum of those.</p>';
+        const splitArg = "document.getElementById('ca_split').checked";
+        html += '<div class="flex gap-2"><button onclick="window.app.saveCategory(' + (isEdit?"'"+c.id+"'":'null') + ', document.getElementById(\'ca_name\').value, document.getElementById(\'ca_group\').value, ' + pctBasedArg + ', ' + splitArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditCategory(\''+c.id+'\')':'toggleAddCategory()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
