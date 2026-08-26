@@ -22,6 +22,14 @@
             --color-error: #FF4757;
             --color-income: #00B894;
             --color-expense: #FF6B6B;
+            --color-essential: #0984E3;
+            --color-essential-bg: #E9F3FC;
+            --color-saving: #00B894;
+            --color-saving-bg: #DFF5E1;
+            --color-spending: #E17055;
+            --color-spending-bg: #FCEBE5;
+            --color-tasks: #6C5CE7;
+            --color-tasks-bg: #EEEAFB;
         }
         * { font-family: 'Poppins', sans-serif; }
         body { background-color: var(--color-bg); }
@@ -46,6 +54,7 @@ class MoneyTracker {
         this.currentTab = 'planning';
         this.showSettings = false;
         this.settingsSection = 'accounts';
+        this.expandedSettingsGroups = { planning: false, tracking: false, reporting: false };
         this.addingAccount = false;
         this.editingAccount = null;
         this.accountFormCategoryUI = '';
@@ -592,33 +601,34 @@ class MoneyTracker {
     }
 
     // ---------- RENDER: PLANNING ----------
-    renderBudgetRow(c) {
+    renderBudgetRow(c, isLast) {
         const b = this.getBudget(c.id);
         const isEditing = this.editingBudget === c.id || !b;
-        let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+        const borderStyle = isLast ? '' : ' border-b';
+        let html = '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);">';
         html += '<div class="flex items-center justify-between" style="color: var(--color-text);"><span class="font-medium">' + c.name + '</span>';
         if (c.percentageBased) {
             const pct = b ? (parseFloat(b.percentage) || 0) : 0;
             const amount = this.totalIncome() * (pct / 100);
             if (isEditing) {
-                html += '<div class="flex items-center gap-2"><input id="bg_' + c.id + '" type="number" step="0.1" value="' + pct + '" class="w-16 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><span class="text-xs" style="color: var(--color-text-muted);">%</span><button onclick="window.app.setBudgetPercentage(\'' + c.id + '\', document.getElementById(\'bg_' + c.id + '\').value)" class="text-xs px-2 py-1 rounded text-white" style="background-color: var(--color-primary);">Save</button></div></div>';
+                html += '<div class="flex items-center gap-2"><input id="bg_' + c.id + '" type="number" step="0.1" value="' + pct + '" class="w-16 px-2 py-1.5 rounded-lg border text-sm" style="border-color: var(--color-border);"><span class="text-xs" style="color: var(--color-text-muted);">%</span><button onclick="window.app.setBudgetPercentage(\'' + c.id + '\', document.getElementById(\'bg_' + c.id + '\').value)" class="text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style="background-color: var(--color-primary);">Save</button></div></div>';
             } else {
-                html += '<div class="flex items-center gap-2"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(amount) + '</span><span class="text-xs" style="color: var(--color-text-muted);">(' + pct + '%)</span><button onclick="window.app.toggleEditBudget(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit</button></div></div>';
+                html += '<div class="flex items-center gap-3"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(amount) + '</span><span class="text-xs" style="color: var(--color-text-muted);">(' + pct + '%)</span><button onclick="window.app.toggleEditBudget(\'' + c.id + '\')" class="text-xs font-semibold underline" style="color: var(--color-accent);">Edit</button></div></div>';
             }
         } else if (c.splitFurther) {
             const subItems = this.getSubItems(c.id);
             const total = this.subItemsTotal(c.id);
             html += '<span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(total) + '</span></div>';
             subItems.forEach(item => {
-                html += '<div class="flex items-center gap-2 mt-2"><input value="' + (item.name||'') + '" placeholder="Item name" onchange="window.app.updateSubItemField(\'' + c.id + '\', \'' + item.id + '\', \'name\', this.value)" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><input type="number" step="0.01" value="' + item.amount + '" placeholder="£" onchange="window.app.updateSubItemField(\'' + c.id + '\', \'' + item.id + '\', \'amount\', this.value)" class="w-20 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><button onclick="window.app.deleteSubItem(\'' + c.id + '\', \'' + item.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-error); color: white;">×</button></div>';
+                html += '<div class="flex items-center gap-2 mt-2"><input value="' + (item.name||'') + '" placeholder="Item name" onchange="window.app.updateSubItemField(\'' + c.id + '\', \'' + item.id + '\', \'name\', this.value)" class="flex-1 px-2 py-1.5 rounded-lg border text-sm" style="border-color: var(--color-border);"><input type="number" step="0.01" value="' + item.amount + '" placeholder="£" onchange="window.app.updateSubItemField(\'' + c.id + '\', \'' + item.id + '\', \'amount\', this.value)" class="w-20 px-2 py-1.5 rounded-lg border text-sm" style="border-color: var(--color-border);"><button onclick="window.app.deleteSubItem(\'' + c.id + '\', \'' + item.id + '\')" class="text-xs px-2 py-1.5 rounded-lg" style="background-color: var(--color-error); color: white;">×</button></div>';
             });
-            html += '<button onclick="window.app.addSubItem(\'' + c.id + '\')" class="text-xs px-3 py-1 rounded mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add item</button>';
+            html += '<button onclick="window.app.addSubItem(\'' + c.id + '\')" class="text-xs font-semibold underline mt-2" style="color: var(--color-accent);">+ Add item</button>';
         } else {
             const target = b ? b.monthlyAmount : 0;
             if (isEditing) {
-                html += '<div class="flex items-center gap-2"><span class="text-xs" style="color: var(--color-text-muted);">£</span><input id="bg_' + c.id + '" type="number" step="0.01" value="' + target + '" class="w-20 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"><button onclick="window.app.setBudget(\'' + c.id + '\', document.getElementById(\'bg_' + c.id + '\').value)" class="text-xs px-2 py-1 rounded text-white" style="background-color: var(--color-primary);">Save</button></div></div>';
+                html += '<div class="flex items-center gap-2"><span class="text-xs" style="color: var(--color-text-muted);">£</span><input id="bg_' + c.id + '" type="number" step="0.01" value="' + target + '" class="w-20 px-2 py-1.5 rounded-lg border text-sm" style="border-color: var(--color-border);"><button onclick="window.app.setBudget(\'' + c.id + '\', document.getElementById(\'bg_' + c.id + '\').value)" class="text-xs font-semibold px-3 py-1.5 rounded-lg text-white" style="background-color: var(--color-primary);">Save</button></div></div>';
             } else {
-                html += '<div class="flex items-center gap-2"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(target) + '</span><button onclick="window.app.toggleEditBudget(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit</button></div></div>';
+                html += '<div class="flex items-center gap-3"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(target) + '</span><button onclick="window.app.toggleEditBudget(\'' + c.id + '\')" class="text-xs font-semibold underline" style="color: var(--color-accent);">Edit</button></div></div>';
             }
         }
         html += '</div>';
@@ -651,63 +661,77 @@ class MoneyTracker {
     renderPlanningTab() {
         const totalIncome = this.totalIncome();
         let html = this.renderTasksSection();
-        html += '<p class="text-sm mb-4 mt-4" style="color: var(--color-text-muted);">Check your amounts for each category then hit Save.</p>';
-        if (totalIncome === 0) html += '<p class="text-sm mb-4 p-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Set your salary in ⚙️ Settings → Income to see each section&#8217;s share of income.</p>';
+        html += '<p class="text-sm mb-4 mt-5" style="color: var(--color-text-muted);">Check your amounts for each category then hit Save.</p>';
+        if (totalIncome === 0) html += '<p class="text-sm mb-4 p-3 rounded-xl" style="background-color: var(--color-secondary); color: var(--color-text);">Set your salary in ⚙️ Settings → Income to see each section&#8217;s share of income.</p>';
 
         const totalPct = this.totalAllocatedPercent();
         if (totalPct !== null) {
             const overBudget = totalPct > 100;
             const barColor = overBudget ? 'var(--color-error)' : 'var(--color-primary)';
-            html += '<div class="p-3 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-            html += '<div class="flex items-center justify-between mb-1"><span class="text-sm font-bold" style="color: var(--color-text);">Total Allocated</span><span class="text-sm font-bold" style="color: ' + barColor + ';">' + totalPct.toFixed(1) + '% of income</span></div>';
-            html += '<div class="w-full rounded-full h-2" style="background-color: var(--color-border);"><div class="h-2 rounded-full" style="width: ' + Math.min(100, totalPct) + '%; background-color: ' + barColor + ';"></div></div>';
+            html += '<div class="p-4 rounded-2xl shadow-sm mb-5" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+            html += '<div class="flex items-center justify-between mb-2"><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Total Allocated</span><span class="text-3xl font-extrabold" style="color: ' + barColor + ';">' + totalPct.toFixed(1) + '%</span></div>';
+            html += '<div class="w-full rounded-full h-3" style="background-color: var(--color-bg);"><div class="h-3 rounded-full" style="width: ' + Math.min(100, totalPct) + '%; background-color: ' + barColor + '; transition: width 0.3s;"></div></div>';
             if (overBudget) {
-                html += '<p class="text-xs mt-2" style="color: var(--color-error);">⚠️ You have allocated ' + (totalPct - 100).toFixed(1) + '% more than your income covers.</p>';
+                html += '<div class="flex items-center gap-2 mt-3 p-2 rounded-lg" style="background-color: var(--color-spending-bg);"><span>⚠️</span><span class="text-xs font-medium" style="color: var(--color-error);">You have allocated ' + (totalPct - 100).toFixed(1) + '% more than your income covers.</span></div>';
             }
             html += '</div>';
         }
 
-        const groups = [['essential','Essentials'],['saving','Savings'],['spending','Spending']];
-        groups.forEach(([key,label]) => {
+        const groupMeta = {
+            essential: { label: 'Essentials', icon: '🏠', accent: 'var(--color-essential)', accentBg: 'var(--color-essential-bg)' },
+            saving: { label: 'Saving', icon: '💰', accent: 'var(--color-saving)', accentBg: 'var(--color-saving-bg)' },
+            spending: { label: 'Spending', icon: '🛍️', accent: 'var(--color-spending)', accentBg: 'var(--color-spending-bg)' }
+        };
+        const groups = ['essential','saving','spending'];
+        groups.forEach(key => {
             const cats = this.categories.filter(c => this.categoryGroup(c) === key);
             if (cats.length === 0) return;
+            const meta = groupMeta[key];
             const groupTotal = this.groupBudgetTotal(key);
             const pct = totalIncome > 0 ? (groupTotal / totalIncome) * 100 : null;
             const target = parseFloat(this.groupTargets[key]) || 0;
             const expanded = !!this.expandedGroups[key];
 
-            let statusColor = 'var(--color-expense)';
+            let statusColor = 'var(--color-text-muted)';
             let targetText = '';
             if (pct !== null && target > 0) {
                 const distance = Math.abs(pct - target);
                 statusColor = this.colorForTargetDistance(distance);
-                targetText = ' · target ' + target + '%' + (distance <= 2 ? ' ✓' : '');
+                targetText = 'target ' + target + '%' + (distance <= 2 ? ' ✓' : '');
             }
 
-            html += '<button onclick="window.app.toggleGroupExpand(\'' + key + '\')" class="w-full flex items-center justify-between py-3 px-1 mt-3 border-b" style="border-color: var(--color-border);">';
-            html += '<span class="text-sm font-bold uppercase" style="color: var(--color-text);">' + (expanded ? '▾ ' : '▸ ') + label + '</span>';
-            html += '<span class="text-sm font-bold" style="color: ' + statusColor + ';">' + (pct !== null ? pct.toFixed(1) + '% of income' + targetText : this.fmt(groupTotal)) + '</span></button>';
+            html += '<div class="rounded-2xl shadow-sm mb-3 overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+            html += '<button onclick="window.app.toggleGroupExpand(\'' + key + '\')" class="w-full flex items-center justify-between p-4">';
+            html += '<div class="flex items-center gap-3"><span class="text-xs" style="color: var(--color-text-muted);">' + (expanded ? '▾' : '▸') + '</span><span class="flex items-center justify-center rounded-full" style="width: 36px; height: 36px; background-color: ' + meta.accentBg + '; font-size: 16px;">' + meta.icon + '</span><span class="text-base font-bold" style="color: var(--color-text);">' + meta.label + '</span></div>';
+            html += '<div class="text-right">' + (pct !== null ? '<div class="text-lg font-bold" style="color: ' + statusColor + ';">' + pct.toFixed(1) + '%</div>' + (targetText ? '<div class="text-xs" style="color: var(--color-text-muted);">' + targetText + '</div>' : '') : '<div class="text-lg font-bold" style="color: var(--color-text);">' + this.fmt(groupTotal) + '</div>') + '</div>';
+            html += '</button>';
             if (expanded) {
-                cats.forEach(c => { html += this.renderBudgetRow(c); });
+                html += '<div style="border-top: 1px solid var(--color-border);">';
+                cats.forEach((c,idx) => { html += this.renderBudgetRow(c, idx === cats.length - 1); });
+                html += '</div>';
             }
+            html += '</div>';
         });
 
         if (this.categories.length === 0) html += '<p style="color: var(--color-text-muted);">No planning categories yet. Add one below.</p>';
 
-        if (this.addingCategory) html += this.renderCategoryForm(null);
-        else html += '<button onclick="window.app.toggleAddCategory()" class="w-full py-2 rounded-lg mt-4" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Planning Category</button>';
-
-        html += '<div class="mt-3">';
-        if (this.editingGroupTargetsInline) {
-            html += '<div class="p-3 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-            html += '<p class="text-xs font-semibold mb-2" style="color: var(--color-text);">Essentials / Saving / Spending Targets</p>';
-            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Essential %</p><input id="pt_gt_essential" type="number" step="1" value="' + this.groupTargets.essential + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Saving %</p><input id="pt_gt_saving" type="number" step="1" value="' + this.groupTargets.saving + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Spending %</p><input id="pt_gt_spending" type="number" step="1" value="' + this.groupTargets.spending + '" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">';
-            html += '<div class="flex gap-2"><button onclick="window.app.saveGroupTargetsInline()" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button><button onclick="window.app.toggleEditGroupTargetsInline()" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div>';
-            html += '</div>';
+        html += '<div class="rounded-2xl shadow-sm mt-4 p-3" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        if (this.addingCategory) {
+            html += this.renderCategoryForm(null);
         } else {
-            html += '<button onclick="window.app.toggleEditGroupTargetsInline()" class="text-xs px-3 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit Essentials/Saving/Spending targets</button>';
+            html += '<div class="flex items-center justify-between flex-wrap gap-2">';
+            html += '<button onclick="window.app.toggleAddCategory()" class="text-sm font-semibold underline" style="color: var(--color-accent);">+ Add Planning Category</button>';
+            html += '<button onclick="window.app.toggleEditGroupTargetsInline()" class="text-sm font-semibold underline" style="color: var(--color-accent);">Edit targets</button>';
+            html += '</div>';
+        }
+        if (this.editingGroupTargetsInline) {
+            html += '<div class="mt-3 pt-3" style="border-top: 1px solid var(--color-border);">';
+            html += '<p class="text-xs font-semibold mb-2" style="color: var(--color-text);">Essentials / Saving / Spending Targets</p>';
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Essential %</p><input id="pt_gt_essential" type="number" step="1" value="' + this.groupTargets.essential + '" class="w-full px-3 py-2 rounded-lg border mb-2" style="border-color: var(--color-border);">';
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Saving %</p><input id="pt_gt_saving" type="number" step="1" value="' + this.groupTargets.saving + '" class="w-full px-3 py-2 rounded-lg border mb-2" style="border-color: var(--color-border);">';
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Spending %</p><input id="pt_gt_spending" type="number" step="1" value="' + this.groupTargets.spending + '" class="w-full px-3 py-2 rounded-lg border mb-3" style="border-color: var(--color-border);">';
+            html += '<div class="flex gap-2"><button onclick="window.app.saveGroupTargetsInline()" class="flex-1 py-2 rounded-lg text-white text-sm font-semibold" style="background-color: var(--color-primary);">Save</button><button onclick="window.app.toggleEditGroupTargetsInline()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div>';
+            html += '</div>';
         }
         html += '</div>';
         return html;
@@ -717,25 +741,33 @@ class MoneyTracker {
     renderTasksSection() {
         const mk = this.monthKey();
         const expanded = !!this.expandedGroups.tasks;
-        let html = '<button onclick="window.app.toggleGroupExpand(\'tasks\')" class="w-full flex items-center justify-between py-3 px-1 border-b" style="border-color: var(--color-border);">';
-        html += '<span class="text-sm font-bold uppercase" style="color: var(--color-text);">' + (expanded ? '▾ ' : '▸ ') + 'Monthly Tasks</span>';
-        html += '<button onclick="event.stopPropagation(); window.app.resetMonthlyTasks()" class="text-xs px-3 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">↻ Reset</button></button>';
+        let html = '<div class="rounded-2xl shadow-sm overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        html += '<button onclick="window.app.toggleGroupExpand(\'tasks\')" class="w-full flex items-center justify-between p-4">';
+        html += '<div class="flex items-center gap-3"><span class="text-xs" style="color: var(--color-text-muted);">' + (expanded ? '▾' : '▸') + '</span><span class="flex items-center justify-center rounded-full" style="width: 36px; height: 36px; background-color: var(--color-tasks-bg); font-size: 16px;">📋</span><span class="text-base font-bold" style="color: var(--color-text);">Monthly Tasks</span></div>';
+        html += '<span onclick="event.stopPropagation(); window.app.resetMonthlyTasks()" class="text-xs font-semibold px-3 py-1.5 rounded-lg" style="background-color: var(--color-secondary); color: var(--color-text);">↻ Reset</span>';
+        html += '</button>';
         if (expanded) {
-            if (this.tasks.length === 0) html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No monthly tasks yet. Add some in ⚙️ Settings → Monthly Tasks.</p>';
-            this.tasks.forEach(t => {
+            html += '<div style="border-top: 1px solid var(--color-border);">';
+            if (this.tasks.length === 0) {
+                html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No monthly tasks yet. Add some in ⚙️ Settings → Monthly Tasks.</p>';
+            }
+            this.tasks.forEach((t,idx) => {
                 const paid = !!(t.paidMonths && t.paidMonths[mk]);
                 const linkedCount = (t.linkedCategoryIds || []).length;
                 let amountBadge = '';
                 if (this.linkTasksToPlanning && linkedCount > 0) {
                     amountBadge = '<span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(this.linkedCategoriesTotal(t)) + '</span>';
                 }
-                html += '<label class="flex items-center gap-3 p-3 rounded-lg border mb-2 mt-2" style="background-color: var(--color-surface); border-color: var(--color-border); cursor: pointer;">';
+                const borderStyle = idx === this.tasks.length - 1 ? '' : ' border-b';
+                html += '<label class="flex items-center gap-3 p-4' + borderStyle + '" style="border-color: var(--color-border); cursor: pointer;">';
                 html += '<input type="checkbox" ' + (paid?'checked':'') + ' onchange="window.app.toggleTaskPaid(\'' + t.id + '\')" class="w-5 h-5 flex-shrink-0">';
                 html += '<p class="flex-1" style="color: var(--color-text); ' + (paid?'text-decoration: line-through; opacity: 0.6;':'') + '">' + t.text + '</p>';
                 html += amountBadge;
                 html += '</label>';
             });
+            html += '</div>';
         }
+        html += '</div>';
         return html;
     }
     renderTaskForm(t) {
@@ -774,9 +806,10 @@ class MoneyTracker {
         return palette[idx % palette.length];
     }
     toggleTrackingCategoryExpand(id) { this.expandedTrackingCategories[id] = !this.expandedTrackingCategories[id]; this.render(); }
-    renderTrackingAccountRow(a, mk, color) {
+    renderTrackingAccountRow(a, mk, color, isLast) {
+        const borderStyle = isLast ? '' : ' border-b';
         if (a.openingMonth && mk < a.openingMonth) {
-            return '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);"><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span><p class="text-xs mt-1" style="color: var(--color-text-muted);">Starts ' + this.monthLabel(a.openingMonth) + '</p></div>';
+            return '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);"><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span><p class="text-xs mt-1" style="color: var(--color-text-muted);">Starts ' + this.monthLabel(a.openingMonth) + '</p></div>';
         }
         const entry = this.entryAt(a.id, mk);
         const prev = this.latestEntryBefore(a.id, mk);
@@ -785,19 +818,19 @@ class MoneyTracker {
         const tracksInput = this.accountTracksInput(a.id);
         const manualGrowth = tracksInput && !!a.manualGrowth;
         const isEditing = this.editingTrackingBalance === a.id || !entry;
-        let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+        let html = '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);">';
         html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span>' + (a.isaType ? ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.isaTypeLabel(a.isaType) + ')</span>' : '') + (a.isLISA ? ' <span class="text-xs" style="color: var(--color-text-muted);">(LISA)</span>' : '') + '</div></div>';
         if (isEditing) {
-            html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
+            html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1.5 rounded-lg border text-sm" style="border-color: var(--color-border);"></div>';
             if (tracksInput) {
-                html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Put in £</span><input id="ti_' + a.id + '" type="number" step="0.01" value="' + (entry && entry.input !== undefined ? entry.input : '') + '" placeholder="0.00" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
+                html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Put in £</span><input id="ti_' + a.id + '" type="number" step="0.01" value="' + (entry && entry.input !== undefined ? entry.input : '') + '" placeholder="0.00" class="flex-1 px-2 py-1.5 rounded-lg border text-sm" style="border-color: var(--color-border);"></div>';
             }
             if (manualGrowth) {
-                html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Growth £</span><input id="tg_' + a.id + '" type="number" step="0.01" value="' + (entry && entry.growth !== undefined ? entry.growth : '') + '" placeholder="0.00" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
+                html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Growth £</span><input id="tg_' + a.id + '" type="number" step="0.01" value="' + (entry && entry.growth !== undefined ? entry.growth : '') + '" placeholder="0.00" class="flex-1 px-2 py-1.5 rounded-lg border text-sm" style="border-color: var(--color-border);"></div>';
             }
-            html += '<button onclick="window.app.saveMonthlyBalance(\'' + a.id + '\', \'' + mk + '\', document.getElementById(\'tb_' + a.id + '\').value' + (tracksInput ? ", document.getElementById('ti_" + a.id + "').value" : ', null') + (manualGrowth ? ", document.getElementById('tg_" + a.id + "').value" : '') + ')" class="text-xs px-3 py-2 rounded text-white w-full" style="background-color: ' + color + ';">Save</button>';
+            html += '<button onclick="window.app.saveMonthlyBalance(\'' + a.id + '\', \'' + mk + '\', document.getElementById(\'tb_' + a.id + '\').value' + (tracksInput ? ", document.getElementById('ti_" + a.id + "').value" : ', null') + (manualGrowth ? ", document.getElementById('tg_" + a.id + "').value" : '') + ')" class="text-xs font-semibold px-3 py-2 rounded-lg text-white w-full" style="background-color: ' + color + ';">Save</button>';
         } else {
-            html += '<div class="flex items-center justify-between mb-1"><span class="text-xs" style="color: var(--color-text-muted);">Balance</span><div class="flex items-center gap-2"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(entry.balance) + '</span><button onclick="window.app.toggleEditTrackingBalance(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Edit</button></div></div>';
+            html += '<div class="flex items-center justify-between mb-1"><span class="text-xs" style="color: var(--color-text-muted);">Balance</span><div class="flex items-center gap-3"><span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(entry.balance) + '</span><button onclick="window.app.toggleEditTrackingBalance(\'' + a.id + '\')" class="text-xs font-semibold underline" style="color: var(--color-accent);">Edit</button></div></div>';
             if (tracksInput) {
                 html += '<div class="flex items-center justify-between"><span class="text-xs" style="color: var(--color-text-muted);">Put in</span><span class="text-sm" style="color: var(--color-text);">' + this.fmt(entry.input !== undefined ? entry.input : 0) + '</span></div>';
             }
@@ -857,9 +890,9 @@ class MoneyTracker {
         }
 
         const overall = this.monthTotalAndDiff(this.accounts, mk);
-        html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-        html += '<p class="text-xs font-bold mb-1" style="color: var(--color-accent); text-transform: uppercase;">Overall Wealth</p>';
-        html += '<p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmt(overall.total) + '</p>';
+        html += '<div class="p-4 rounded-2xl shadow-sm mb-4" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        html += '<div class="flex items-center gap-2 mb-1"><span>💷</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Overall Wealth</span></div>';
+        html += '<p class="text-3xl font-extrabold" style="color: var(--color-text);">' + this.fmt(overall.total) + '</p>';
         html += '<p class="text-sm mt-1" style="color: ' + (overall.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(overall.diff) + this.changeArrow(overall.diff) + ' vs ' + this.monthLabel(this.shiftMonthKey(mk,-1)) + '</p>';
         html += '</div>';
 
@@ -871,10 +904,10 @@ class MoneyTracker {
         const uncategorised = this.accounts.filter(a => !this.accountCategories.some(c => c.id === a.categoryId));
         if (uncategorised.length) groups.push({ name: 'Uncategorised', accounts: uncategorised });
 
-        html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">By Category</p>';
+        html += '<div class="rounded-2xl shadow-sm mb-4 overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 p-4 pb-2"><span>📊</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">By Category</span></div>';
         groups.forEach((g,idx) => {
             const gd = this.monthTotalAndDiff(g.accounts, mk);
-            html += '<div class="flex items-center justify-between pb-2' + (idx < groups.length-1?' border-b mb-2':'') + '" style="' + (idx < groups.length-1?'border-color: var(--color-border);':'') + '">';
+            html += '<div class="flex items-center justify-between p-4 pt-2' + (idx < groups.length-1?' border-b':'') + '" style="border-color: var(--color-border);">';
             html += '<span style="color: var(--color-text);">' + g.name + '</span>';
             html += '<div class="text-right"><p class="font-bold" style="color: var(--color-text);">' + this.fmt(gd.total) + '</p><p class="text-xs" style="color: ' + (gd.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(gd.diff) + this.changeArrow(gd.diff) + '</p></div>';
             html += '</div>';
@@ -882,9 +915,9 @@ class MoneyTracker {
         html += '</div>';
 
         const comment = this.monthlyComments[mk] || '';
-        html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-2" style="color: var(--color-text-muted); text-transform: uppercase;">Comment</p>';
-        html += '<textarea id="review_comment_' + mk + '" placeholder="How did this month go?" class="w-full px-3 py-2 rounded border text-sm" style="border-color: var(--color-border); min-height: 80px;">' + comment + '</textarea>';
-        html += '<button onclick="window.app.saveMonthlyComment(\'' + mk + '\', document.getElementById(\'review_comment_' + mk + '\').value)" class="w-full mt-2 py-2 rounded text-white" style="background-color: var(--color-primary);">Save Comment</button>';
+        html += '<div class="p-4 rounded-2xl shadow-sm mb-4" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 mb-2"><span>📝</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Comment</span></div>';
+        html += '<textarea id="review_comment_' + mk + '" placeholder="How did this month go?" class="w-full px-3 py-2 rounded-lg border text-sm" style="border-color: var(--color-border); min-height: 80px;">' + comment + '</textarea>';
+        html += '<button onclick="window.app.saveMonthlyComment(\'' + mk + '\', document.getElementById(\'review_comment_' + mk + '\').value)" class="w-full mt-2 py-2 rounded-lg text-white text-sm font-semibold" style="background-color: var(--color-primary);">Save Comment</button>';
         html += '</div>';
         return html;
     }
@@ -911,21 +944,28 @@ class MoneyTracker {
                 const total = g.accounts.reduce((s,a) => s + this.balanceAsOf(a.id, mk), 0);
                 const diff = this.groupMonthDiff(g.accounts, mk);
                 const expanded = !!this.expandedTrackingCategories[g.id];
-                let arrow = '';
+                let diffLine = '';
                 if (diff !== null && diff !== 0) {
-                    arrow = ' <span style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + (diff >= 0 ? '▲' : '▼') + '</span>';
+                    diffLine = '<div class="text-xs" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + (diff >= 0 ? '▲' : '▼') + ' ' + this.fmtSigned(diff) + '</div>';
                 }
-                html += '<button onclick="window.app.toggleTrackingCategoryExpand(\'' + g.id + '\')" class="w-full flex items-center justify-between py-3 px-1 mt-3 border-b" style="border-color: var(--color-border);">';
-                html += '<span class="text-sm font-bold uppercase flex items-center gap-2" style="color: var(--color-text);">' + (expanded ? '▾ ' : '▸ ') + '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:' + g.color + ';"></span>' + g.name + '</span>';
-                html += '<span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(total) + arrow + '</span></button>';
+                html += '<div class="rounded-2xl shadow-sm mb-3 overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+                html += '<button onclick="window.app.toggleTrackingCategoryExpand(\'' + g.id + '\')" class="w-full flex items-center justify-between p-4">';
+                html += '<div class="flex items-center gap-3"><span class="text-xs" style="color: var(--color-text-muted);">' + (expanded ? '▾' : '▸') + '</span><span class="flex items-center justify-center rounded-full" style="width: 36px; height: 36px; background-color: ' + g.color + '; color: white; font-weight: 700; font-size: 14px;">' + g.name.charAt(0).toUpperCase() + '</span><span class="text-base font-bold" style="color: var(--color-text);">' + g.name + '</span></div>';
+                html += '<div class="text-right"><div class="text-lg font-bold" style="color: var(--color-text);">' + this.fmt(total) + '</div>' + diffLine + '</div>';
+                html += '</button>';
                 if (expanded) {
-                    g.accounts.forEach(a => { html += this.renderTrackingAccountRow(a, mk, g.color); });
+                    html += '<div style="border-top: 1px solid var(--color-border);">';
+                    g.accounts.forEach((a,idx) => { html += this.renderTrackingAccountRow(a, mk, g.color, idx === g.accounts.length - 1); });
+                    html += '</div>';
                 }
+                html += '</div>';
             });
         }
 
+        html += '<div class="rounded-2xl shadow-sm mt-4 p-3" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
         if (this.addingAccount) html += this.renderAccountForm(null);
-        else html += '<button onclick="window.app.toggleAddAccount()" class="w-full py-2 rounded-lg mt-4" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account</button>';
+        else html += '<button onclick="window.app.toggleAddAccount()" class="text-sm font-semibold underline" style="color: var(--color-accent);">+ Add Account</button>';
+        html += '</div>';
         return html;
     }
 
@@ -933,21 +973,23 @@ class MoneyTracker {
     renderMonthlyByCategorySection(taxYearMonthSet) {
         const cats = this.accountCategories.filter(c => this.accounts.some(a => a.categoryId === c.id));
         if (cats.length === 0) return '';
-        let html = '<p class="text-xs font-bold mb-2 mt-1" style="color: var(--color-text-muted); text-transform: uppercase;">Month by Month by Category</p>';
+        let html = '<div class="flex items-center gap-2 mb-2 mt-1"><span>📅</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Month by Month by Category</p></div>';
         cats.forEach(cat => {
             const rows = this.categoryMonthlyTotals(cat.id).filter(r => taxYearMonthSet.has(r.monthKey)).slice().reverse();
             if (rows.length === 0) return;
             const expanded = !!this.expandedReportCategories[cat.id];
-            html += '<button onclick="window.app.toggleReportCategoryExpand(\'' + cat.id + '\')" class="w-full flex items-center justify-between p-3 rounded-lg border mb-1" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-            html += '<span class="font-medium" style="color: var(--color-text);">' + (expanded?'▾ ':'▸ ') + cat.name + '</span>';
+            html += '<div class="rounded-2xl shadow-sm mb-2 overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+            html += '<button onclick="window.app.toggleReportCategoryExpand(\'' + cat.id + '\')" class="w-full flex items-center justify-between p-4">';
+            html += '<span class="font-medium flex items-center gap-2" style="color: var(--color-text);"><span class="text-xs" style="color: var(--color-text-muted);">' + (expanded?'▾':'▸') + '</span>' + cat.name + '</span>';
             html += '<span class="font-bold" style="color: var(--color-text);">' + this.fmt(rows[0].total) + '</span></button>';
             if (expanded) {
-                html += '<div class="mb-2">';
+                html += '<div style="border-top: 1px solid var(--color-border);">';
                 rows.forEach((r,idx) => {
-                    html += '<div class="flex items-center justify-between p-2 pl-4' + (idx < rows.length-1?' border-b':'') + '" style="' + (idx < rows.length-1?'border-color: var(--color-border);':'') + '"><span class="text-xs" style="color: var(--color-text-muted);">' + this.monthLabel(r.monthKey) + '</span><div class="flex items-center gap-2"><span class="text-sm" style="color: var(--color-text);">' + this.fmt(r.total) + '</span>' + (r.diff !== null ? '<span class="text-xs" style="color: ' + (r.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(r.diff) + '</span>' : '') + '</div></div>';
+                    html += '<div class="flex items-center justify-between p-3 pl-4' + (idx < rows.length-1?' border-b':'') + '" style="' + (idx < rows.length-1?'border-color: var(--color-border);':'') + '"><span class="text-xs" style="color: var(--color-text-muted);">' + this.monthLabel(r.monthKey) + '</span><div class="flex items-center gap-2"><span class="text-sm" style="color: var(--color-text);">' + this.fmt(r.total) + '</span>' + (r.diff !== null ? '<span class="text-xs" style="color: ' + (r.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(r.diff) + '</span>' : '') + '</div></div>';
                 });
                 html += '</div>';
             }
+            html += '</div>';
         });
         return html;
     }
@@ -958,7 +1000,7 @@ class MoneyTracker {
         const max = Math.max(...series.map(s => s.total), 1);
         const min = Math.min(...series.map(s => s.total), 0);
         const range = (max - min) || 1;
-        let html = '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Balance Trend</p>';
+        let html = '<div class="p-4 rounded-2xl shadow-sm mb-4" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 mb-3"><span>📉</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Balance Trend</p></div>';
         html += '<div class="flex items-end gap-1" style="height: 80px;">';
         series.forEach(s => {
             const heightPct = Math.max(4, ((s.total - min) / range) * 100);
@@ -976,8 +1018,8 @@ class MoneyTracker {
         const rate = this.savingsRateForTaxYear(startYear);
         if (rate === null) return '';
         const target = parseFloat(this.groupTargets.saving) || 0;
-        let html = '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-        html += '<p class="text-xs font-bold mb-1" style="color: var(--color-text-muted); text-transform: uppercase;">Savings Rate</p>';
+        let html = '<div class="p-4 rounded-2xl shadow-sm mb-4" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        html += '<div class="flex items-center gap-2 mb-1"><span>🎯</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Savings Rate</p></div>';
         let color = 'var(--color-text)';
         let targetText = '';
         if (target > 0) {
@@ -985,7 +1027,8 @@ class MoneyTracker {
             color = this.colorForTargetDistance(distance);
             targetText = ' · target ' + target + '%' + (distance <= 2 ? ' ✓' : '');
         }
-        html += '<p class="text-2xl font-bold" style="color: ' + color + ';">' + rate.toFixed(1) + '%' + targetText + '</p>';
+        html += '<p class="text-3xl font-extrabold" style="color: ' + color + ';">' + rate.toFixed(1) + '%</p>';
+        html += '<p class="text-xs" style="color: var(--color-text-muted);">' + targetText.replace(' · ','') + '</p>';
         html += '<p class="text-xs mt-1" style="color: var(--color-text-muted);">Share of your income kept as balance growth this tax year</p>';
         html += '</div>';
         return html;
@@ -997,10 +1040,10 @@ class MoneyTracker {
         const used = this.isaContributionsForTaxYear(startYear);
         const pct = Math.min(100, (used / allowance) * 100);
         const color = used > allowance ? 'var(--color-error)' : (pct >= 90 ? 'var(--color-warning)' : 'var(--color-success)');
-        let html = '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-        html += '<p class="text-xs font-bold mb-1" style="color: var(--color-text-muted); text-transform: uppercase;">ISA Allowance</p>';
+        let html = '<div class="p-4 rounded-2xl shadow-sm mb-4" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        html += '<div class="flex items-center gap-2 mb-1"><span>🏛️</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">ISA Allowance</p></div>';
         html += '<p class="text-lg font-bold mb-2" style="color: var(--color-text);">' + this.fmt(used) + ' of ' + this.fmt(allowance) + '</p>';
-        html += '<div class="w-full rounded-full h-2" style="background-color: var(--color-border);"><div class="h-2 rounded-full" style="width: ' + pct + '%; background-color: ' + color + ';"></div></div>';
+        html += '<div class="w-full rounded-full h-3" style="background-color: var(--color-bg);"><div class="h-3 rounded-full" style="width: ' + pct + '%; background-color: ' + color + ';"></div></div>';
         html += '</div>';
         return html;
     }
@@ -1008,8 +1051,8 @@ class MoneyTracker {
         const thisYear = this.taxYearChangeSummary(startYear);
         const lastYear = this.taxYearChangeSummary(startYear - 1);
         if (thisYear.recordedCount === 0 && lastYear.recordedCount === 0) return '';
-        let html = '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-        html += '<p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Year on Year</p>';
+        let html = '<div class="p-4 rounded-2xl shadow-sm mb-4" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        html += '<div class="flex items-center gap-2 mb-3"><span>📆</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Year on Year</p></div>';
         html += '<div class="grid grid-cols-2 gap-3">';
         html += '<div><p class="text-xs" style="color: var(--color-text-muted);">' + this.taxYearLabel(startYear - 1) + '</p><p class="font-bold" style="color: ' + (lastYear.recordedCount>0 ? (lastYear.totalChange>=0?'var(--color-success)':'var(--color-error)') : 'var(--color-text-muted)') + ';">' + (lastYear.recordedCount>0 ? this.fmtSigned(lastYear.totalChange) : '—') + '</p></div>';
         html += '<div><p class="text-xs" style="color: var(--color-text-muted);">' + this.taxYearLabel(startYear) + '</p><p class="font-bold" style="color: ' + (thisYear.recordedCount>0 ? (thisYear.totalChange>=0?'var(--color-success)':'var(--color-error)') : 'var(--color-text-muted)') + ';">' + (thisYear.recordedCount>0 ? this.fmtSigned(thisYear.totalChange) : '—') + '</p></div>';
@@ -1027,11 +1070,11 @@ class MoneyTracker {
         html += '<button onclick="window.app.shiftReportingTaxYear(1)" class="w-9 h-9 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">›</button>';
         html += '</div>';
         html += '<div class="grid grid-cols-2 gap-3 mb-4">';
-        html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: var(--color-accent); text-transform: uppercase;">Total Balance</p><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmt(this.totalBalance()) + '</p></div>';
+        html += '<div class="p-4 rounded-2xl shadow-sm" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-1 mb-1"><span style="font-size:12px;">💰</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Total Balance</p></div><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmt(this.totalBalance()) + '</p></div>';
         if (cs.recordedCount > 0) {
-            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: ' + (cs.totalChange>=0?'var(--color-success)':'var(--color-error)') + '; text-transform: uppercase;">Change This Tax Year</p><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmtSigned(cs.totalChange) + '</p></div>';
+            html += '<div class="p-4 rounded-2xl shadow-sm" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-1 mb-1"><span style="font-size:12px;">' + (cs.totalChange>=0?'📈':'📉') + '</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Change This Year</p></div><p class="text-2xl font-bold" style="color: ' + (cs.totalChange>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(cs.totalChange) + '</p></div>';
         } else {
-            html += '<div class="p-4 rounded-lg border flex items-center" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs" style="color: var(--color-text-muted);">No balances recorded yet this tax year — add them on the Tracking tab.</p></div>';
+            html += '<div class="p-4 rounded-2xl shadow-sm flex items-center" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><p class="text-xs" style="color: var(--color-text-muted);">No balances recorded yet this tax year — add them on the Tracking tab.</p></div>';
         }
         html += '</div>';
 
@@ -1040,10 +1083,10 @@ class MoneyTracker {
         html += this.renderISAAllowanceSection(startYear);
         html += this.renderYearOverYearSection(startYear);
 
-        html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Accounts</p>';
-        if (this.accounts.length === 0) html += '<p style="color: var(--color-text-muted); font-size: 14px;">No accounts yet.</p>';
+        html += '<div class="rounded-2xl shadow-sm mb-4 overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 p-4 pb-2"><span>🏦</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Accounts</p></div>';
+        if (this.accounts.length === 0) html += '<p class="px-4 pb-4" style="color: var(--color-text-muted); font-size: 14px;">No accounts yet.</p>';
         this.accounts.forEach((a,idx) => {
-            html += '<div class="flex items-center justify-between pb-2' + (idx < this.accounts.length-1?' border-b':'') + ' mb-2" style="' + (idx < this.accounts.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + a.name + ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ')</span></span><span class="font-bold" style="color: var(--color-text);">' + this.fmt(this.accountBalance(a.id)) + '</span></div>';
+            html += '<div class="flex items-center justify-between p-4 pt-2' + (idx < this.accounts.length-1?' border-b':'') + '" style="border-color: var(--color-border);"><span style="color: var(--color-text);">' + a.name + ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ')</span></span><span class="font-bold" style="color: var(--color-text);">' + this.fmt(this.accountBalance(a.id)) + '</span></div>';
         });
         html += '</div>';
 
@@ -1052,18 +1095,18 @@ class MoneyTracker {
 
         const changes = this.biggestChangesForTaxYear(startYear);
         if (changes.length > 0) {
-            html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Biggest Changes This Tax Year</p>';
+            html += '<div class="rounded-2xl shadow-sm mb-4 overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 p-4 pb-2"><span>⚡</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Biggest Changes This Tax Year</p></div>';
             changes.forEach((c,idx) => {
-                html += '<div class="flex items-center justify-between pb-2' + (idx < changes.length-1?' border-b':'') + '" style="' + (idx < changes.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + c.name + '</span><span class="font-bold" style="color: ' + (c.change>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(c.change) + '</span></div>';
+                html += '<div class="flex items-center justify-between p-4 pt-2' + (idx < changes.length-1?' border-b':'') + '" style="border-color: var(--color-border);"><span style="color: var(--color-text);">' + c.name + '</span><span class="font-bold" style="color: ' + (c.change>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(c.change) + '</span></div>';
             });
             html += '</div>';
         }
 
         const tracked = this.trackedAccountsSummaryForTaxYear(startYear);
         if (tracked.length > 0) {
-            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Contributions & Growth (' + this.taxYearLabel(startYear) + ')</p>';
+            html += '<div class="rounded-2xl shadow-sm overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 p-4 pb-2"><span>🌱</span><p class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Contributions & Growth (' + this.taxYearLabel(startYear) + ')</p></div>';
             tracked.forEach((t,idx) => {
-                html += '<div class="pb-2' + (idx < tracked.length-1?' border-b mb-2':'') + '" style="' + (idx < tracked.length-1?'border-color: var(--color-border);':'') + '"><p style="color: var(--color-text);">' + t.name + '</p><div class="flex items-center justify-between text-xs" style="color: var(--color-text-muted);"><span>' + this.fmt(t.totalInput) + ' put in</span><span style="color: ' + (t.growth>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(t.growth) + ' growth</span></div></div>';
+                html += '<div class="p-4 pt-2' + (idx < tracked.length-1?' border-b':'') + '" style="border-color: var(--color-border);"><p style="color: var(--color-text);">' + t.name + '</p><div class="flex items-center justify-between text-xs" style="color: var(--color-text-muted);"><span>' + this.fmt(t.totalInput) + ' put in</span><span style="color: ' + (t.growth>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(t.growth) + ' growth</span></div></div>';
             });
             html += '</div>';
         }
@@ -1073,39 +1116,60 @@ class MoneyTracker {
     // ---------- RENDER: SETTINGS ----------
     renderSettings() {
         let html = '<div class="max-w-4xl mx-auto px-4 py-4 border-t" style="border-color: var(--color-border); background-color: var(--color-surface);"><h3 class="font-semibold mb-3" style="color: var(--color-text);">Settings</h3>';
-        html += '<div class="flex gap-2 mb-4 flex-wrap">';
-        html += '<button onclick="window.app.settingsSection=\'accounts\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='accounts'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='accounts'?'var(--color-primary-text)':'var(--color-text)') + ';">Accounts</button>';
-        html += '<button onclick="window.app.settingsSection=\'accountCategories\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='accountCategories'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='accountCategories'?'var(--color-primary-text)':'var(--color-text)') + ';">Account Categories</button>';
-        html += '<button onclick="window.app.settingsSection=\'categories\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='categories'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='categories'?'var(--color-primary-text)':'var(--color-text)') + ';">Planning Categories</button>';
-        html += '<button onclick="window.app.settingsSection=\'income\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='income'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='income'?'var(--color-primary-text)':'var(--color-text)') + ';">Income</button>';
-        html += '<button onclick="window.app.settingsSection=\'tasks\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='tasks'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='tasks'?'var(--color-primary-text)':'var(--color-text)') + ';">Monthly Tasks</button>';
-        html += '<button onclick="window.app.exportCSV()" class="px-3 py-1 rounded-full text-sm" style="background-color: var(--color-bg); color: var(--color-text);">📥 Export CSV</button>';
-        html += '<button onclick="window.app.settingsSection=\'pdf\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection==='pdf'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection==='pdf'?'var(--color-primary-text)':'var(--color-text)') + ';">📄 PDF Report</button></div>';
 
-        if (this.settingsSection === 'accounts') {
+        const groups = [
+            ['planning', 'Planning', [['categories','Planning Categories'],['income','Income'],['tasks','Monthly Tasks']]],
+            ['tracking', 'Tracking', [['accounts','Accounts'],['accountCategories','Account Categories']]],
+            ['reporting', 'Reporting', [['pdf','PDF Report']]]
+        ];
+        groups.forEach(([groupKey, groupLabel, sections]) => {
+            const expanded = !!this.expandedSettingsGroups[groupKey];
+            html += '<button onclick="window.app.toggleSettingsGroup(\'' + groupKey + '\')" class="w-full flex items-center justify-between py-3 px-1 border-b" style="border-color: var(--color-border);">';
+            html += '<span class="text-sm font-bold uppercase" style="color: var(--color-text);">' + (expanded ? '▾ ' : '▸ ') + groupLabel + '</span></button>';
+            if (expanded) {
+                html += '<div class="flex gap-2 mb-3 mt-3 flex-wrap">';
+                sections.forEach(([secKey, secLabel]) => {
+                    html += '<button onclick="window.app.settingsSection=\'' + secKey + '\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection===secKey?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection===secKey?'var(--color-primary-text)':'var(--color-text)') + ';">' + secLabel + '</button>';
+                });
+                if (groupKey === 'reporting') {
+                    html += '<button onclick="window.app.exportCSV()" class="px-3 py-1 rounded-full text-sm" style="background-color: var(--color-bg); color: var(--color-text);">📥 Export CSV</button>';
+                }
+                html += '</div>';
+                const currentBelongs = sections.some(([k]) => k === this.settingsSection);
+                const activeSection = currentBelongs ? this.settingsSection : sections[0][0];
+                html += this.renderSettingsSectionContent(activeSection);
+            }
+        });
+
+        html += '<button onclick="window.app.toggleSettings()" class="w-full mt-4 py-2 rounded-lg" style="background-color: var(--color-secondary); color: var(--color-text);">Close Settings</button></div>';
+        return html;
+    }
+    renderSettingsSectionContent(section) {
+        let html = '';
+        if (section === 'accounts') {
             if (this.addingAccount) html += this.renderAccountForm(null);
             this.accounts.forEach(a => {
                 if (this.editingAccount === a.id) { html += this.renderAccountForm(a); return; }
                 html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + (a.isaType ? ' · ' + this.isaTypeLabel(a.isaType) : '') + (a.isLISA ? ' · LISA' : '') + ', opens ' + this.fmt(a.startingBalance) + (a.openingMonth ? ' as of ' + this.monthLabel(a.openingMonth) : '') + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingAccount) html += '<button onclick="window.app.toggleAddAccount()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account</button>';
-        } else if (this.settingsSection === 'accountCategories') {
+        } else if (section === 'accountCategories') {
             if (this.addingAccountCategory) html += this.renderAccountCategoryForm(null);
             this.accountCategories.forEach(c => {
                 if (this.editingAccountCategory === c.id) { html += this.renderAccountCategoryForm(c); return; }
                 html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><span style="color: var(--color-text);">' + c.name + (c.trackInput ? ' <span class="text-xs" style="color: var(--color-text-muted);">(tracks input)</span>' : '') + '</span><div class="flex gap-1"><button onclick="window.app.toggleEditAccountCategory(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccountCategory(\'' + c.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingAccountCategory) html += '<button onclick="window.app.toggleAddAccountCategory()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account Category</button>';
-        } else if (this.settingsSection === 'categories') {
+        } else if (section === 'categories') {
             if (this.addingCategory) html += this.renderCategoryForm(null);
             this.categories.forEach(c => {
                 if (this.editingCategory === c.id) { html += this.renderCategoryForm(c); return; }
                 html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + c.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.categoryGroup(c) + (c.percentageBased ? ', %-based' : '') + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditCategory(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteCategory(\'' + c.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingCategory) html += '<button onclick="window.app.toggleAddCategory()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Planning Category</button>';
-        } else if (this.settingsSection === 'income') {
+        } else if (section === 'income') {
             html += this.renderIncomeSettings();
-        } else if (this.settingsSection === 'tasks') {
+        } else if (section === 'tasks') {
             html += '<label class="flex items-center gap-2 mb-3 p-2 rounded" style="background-color: var(--color-bg); color: var(--color-text);"><input type="checkbox" ' + (this.linkTasksToPlanning ? 'checked' : '') + ' onchange="window.app.toggleLinkTasksToPlanning(this.checked)"> Link tasks to planning amounts?</label>';
             if (this.addingTask) html += this.renderTaskForm(null);
             this.tasks.forEach((t, idx) => {
@@ -1115,10 +1179,9 @@ class MoneyTracker {
                 html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span class="text-xs" style="color: var(--color-text-muted);">' + (idx+1) + '.</span> <span style="color: var(--color-text);">' + t.text + '</span>' + linkedNote + '</div><div class="flex gap-1"><button onclick="window.app.toggleEditTask(\'' + t.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteTask(\'' + t.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingTask) html += '<button onclick="window.app.toggleAddTask()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Monthly Task</button>';
-        } else if (this.settingsSection === 'pdf') {
+        } else if (section === 'pdf') {
             html += this.renderPDFReportSettings();
         }
-        html += '<button onclick="window.app.toggleSettings()" class="w-full mt-4 py-2 rounded-lg" style="background-color: var(--color-secondary); color: var(--color-text);">Close Settings</button></div>';
         return html;
     }
     renderAccountForm(a) {
@@ -1211,6 +1274,15 @@ class MoneyTracker {
     }
 
     toggleSettings() { this.showSettings = !this.showSettings; this.render(); }
+    toggleSettingsGroup(key) {
+        const opening = !this.expandedSettingsGroups[key];
+        this.expandedSettingsGroups[key] = opening;
+        if (opening) {
+            const groupSections = { planning: ['categories','income','tasks'], tracking: ['accounts','accountCategories'], reporting: ['pdf'] };
+            if (!groupSections[key].includes(this.settingsSection)) this.settingsSection = groupSections[key][0];
+        }
+        this.render();
+    }
 
     render() {
         let content = '';
