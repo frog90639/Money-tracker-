@@ -61,6 +61,7 @@ class MoneyTracker {
         this.expandedTrackingCategories = {};
         this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
         this.trackingMonth = this.monthKey();
+        this.reportingTaxYear = this.taxYearStartForMonthKey(this.monthKey());
         this.migrateLegacyIncomeCategories();
         this.migrateDefaultGroupTargets(data);
         this.render();
@@ -118,6 +119,15 @@ class MoneyTracker {
     monthKey(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
     monthLabel(key) { const [y,m] = key.split('-'); const d = new Date(parseInt(y), parseInt(m)-1, 1); return d.toLocaleString('en-GB', { month: 'long', year: 'numeric' }); }
     shiftMonthKey(mk, delta) { const [y,m] = mk.split('-').map(Number); const d = new Date(y, (m-1)+delta, 1); return this.monthKey(d); }
+    taxYearStartForMonthKey(mk) { const [y,m] = mk.split('-').map(Number); return m >= 4 ? y : y - 1; }
+    taxYearMonths(startYear) {
+        const months = [];
+        let mk = startYear + '-04';
+        for (let i = 0; i < 12; i++) { months.push(mk); mk = this.shiftMonthKey(mk, 1); }
+        return months;
+    }
+    taxYearLabel(startYear) { return startYear + '/' + String(startYear + 1).slice(-2); }
+    shiftReportingTaxYear(delta) { this.reportingTaxYear += delta; this.render(); }
 
     // ---------- ACCOUNTS ----------
     entryAt(accountId, mk) { return this.monthlyBalances.find(e => e.accountId === accountId && e.monthKey === mk) || null; }
@@ -145,15 +155,16 @@ class MoneyTracker {
         this.render();
     }
     setAccountFormCategory(categoryId) { this.accountFormCategoryUI = categoryId; this.render(); }
-    saveAccount(id, name, categoryId, startingBalance, isaType) {
+    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth) {
         if (!name) return;
         const isISA = this.isISACategoryId(categoryId);
+        const validMonth = /^\d{4}-\d{2}$/.test(openingMonth || '') ? openingMonth : this.monthKey();
         if (id) {
             const a = this.accounts.find(x => x.id === id);
-            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; }
+            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; }
             this.editingAccount = null;
         } else {
-            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined });
+            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth });
             this.addingAccount = false;
         }
         this.saveData(); this.render();
@@ -320,40 +331,48 @@ class MoneyTracker {
     totalInputForAccount(accountId) {
         return this.monthlyBalances.filter(e => e.accountId === accountId).reduce((s,e) => s + (parseFloat(e.input) || 0), 0);
     }
-    trackedAccountsSummary() {
+    trackedAccountsSummaryForTaxYear(startYear) {
+        const months = this.taxYearMonths(startYear);
+        const monthSet = new Set(months);
+        const endMk = months[months.length - 1];
+        const startBaselineMk = this.shiftMonthKey(months[0], -1);
         return this.accounts.filter(a => this.accountTracksInput(a.id)).map(a => {
-            const totalInput = this.totalInputForAccount(a.id);
-            const currentBal = this.accountBalance(a.id);
-            const opening = parseFloat(a.startingBalance) || 0;
-            const growth = currentBal - opening - totalInput;
-            return { name: a.name, totalInput, growth, currentBal };
+            const totalInput = this.monthlyBalances.filter(e => e.accountId === a.id && monthSet.has(e.monthKey)).reduce((s,e) => s + (parseFloat(e.input) || 0), 0);
+            const endBalance = this.balanceAsOf(a.id, endMk);
+            const startBalance = this.balanceAsOf(a.id, startBaselineMk);
+            const growth = endBalance - startBalance - totalInput;
+            return { name: a.name, totalInput, growth, endBalance };
         });
     }
 
     // ---------- REPORTING ----------
     totalBalance() { return this.accounts.reduce((s,a) => s + this.accountBalance(a.id), 0); }
-    monthlyChangeSummary() {
-        const mk = this.monthKey();
+    taxYearChangeSummary(startYear) {
+        const months = this.taxYearMonths(startYear);
+        const endMk = months[months.length - 1];
+        const startBaselineMk = this.shiftMonthKey(months[0], -1);
         let totalChange = 0, recordedCount = 0;
         this.accounts.forEach(a => {
-            const entry = this.entryAt(a.id, mk);
-            if (!entry) return;
-            const prev = this.latestEntryBefore(a.id, mk);
-            const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
-            totalChange += entry.balance - baseline;
+            const hasAnyEntryInYear = this.monthlyBalances.some(e => e.accountId === a.id && months.includes(e.monthKey));
+            if (!hasAnyEntryInYear) return;
+            const endBalance = this.balanceAsOf(a.id, endMk);
+            const startBalance = this.balanceAsOf(a.id, startBaselineMk);
+            totalChange += endBalance - startBalance;
             recordedCount++;
         });
         return { totalChange, recordedCount };
     }
-    biggestChangesThisMonth() {
-        const mk = this.monthKey();
+    biggestChangesForTaxYear(startYear) {
+        const months = this.taxYearMonths(startYear);
+        const endMk = months[months.length - 1];
+        const startBaselineMk = this.shiftMonthKey(months[0], -1);
         const rows = [];
         this.accounts.forEach(a => {
-            const entry = this.entryAt(a.id, mk);
-            if (!entry) return;
-            const prev = this.latestEntryBefore(a.id, mk);
-            const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
-            rows.push({ name: a.name, change: entry.balance - baseline });
+            const hasAnyEntryInYear = this.monthlyBalances.some(e => e.accountId === a.id && months.includes(e.monthKey));
+            if (!hasAnyEntryInYear) return;
+            const endBalance = this.balanceAsOf(a.id, endMk);
+            const startBalance = this.balanceAsOf(a.id, startBaselineMk);
+            rows.push({ name: a.name, change: endBalance - startBalance });
         });
         return rows.sort((a,b) => Math.abs(b.change) - Math.abs(a.change)).slice(0,5);
     }
@@ -362,12 +381,14 @@ class MoneyTracker {
         return Array.from(s).sort();
     }
     balanceAsOf(accountId, mk) {
+        const acc = this.accounts.find(a => a.id === accountId);
+        if (!acc) return 0;
+        if (acc.openingMonth && mk < acc.openingMonth) return 0;
         const entry = this.entryAt(accountId, mk);
         if (entry) return entry.balance;
         const prev = this.latestEntryBefore(accountId, mk);
         if (prev) return prev.balance;
-        const acc = this.accounts.find(a => a.id === accountId);
-        return acc ? (parseFloat(acc.startingBalance) || 0) : 0;
+        return parseFloat(acc.startingBalance) || 0;
     }
     toggleReportCategoryExpand(id) { this.expandedReportCategories[id] = !this.expandedReportCategories[id]; this.render(); }
     categoryMonthlyTotals(categoryId) {
@@ -519,6 +540,9 @@ class MoneyTracker {
     }
     toggleTrackingCategoryExpand(id) { this.expandedTrackingCategories[id] = !this.expandedTrackingCategories[id]; this.render(); }
     renderTrackingAccountRow(a, mk, color) {
+        if (a.openingMonth && mk < a.openingMonth) {
+            return '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);"><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span><p class="text-xs mt-1" style="color: var(--color-text-muted);">Starts ' + this.monthLabel(a.openingMonth) + '</p></div>';
+        }
         const entry = this.entryAt(a.id, mk);
         const prev = this.latestEntryBefore(a.id, mk);
         const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
@@ -544,14 +568,13 @@ class MoneyTracker {
         return html;
     }
     groupMonthDiff(accounts, mk) {
+        const prevMk = this.shiftMonthKey(mk, -1);
         let total = 0, baseline = 0, anyEntry = false;
         accounts.forEach(a => {
-            const entry = this.entryAt(a.id, mk);
-            const prevEntry = this.latestEntryBefore(a.id, mk);
-            const base = prevEntry ? prevEntry.balance : (parseFloat(a.startingBalance) || 0);
-            total += entry ? entry.balance : base;
-            baseline += base;
-            if (entry) anyEntry = true;
+            if (a.openingMonth && mk < a.openingMonth) return;
+            if (this.entryAt(a.id, mk)) anyEntry = true;
+            total += this.balanceAsOf(a.id, mk);
+            baseline += this.balanceAsOf(a.id, prevMk);
         });
         return anyEntry ? (total - baseline) : null;
     }
@@ -595,12 +618,12 @@ class MoneyTracker {
     }
 
     // ---------- RENDER: REPORTING ----------
-    renderMonthlyByCategorySection() {
+    renderMonthlyByCategorySection(taxYearMonthSet) {
         const cats = this.accountCategories.filter(c => this.accounts.some(a => a.categoryId === c.id));
         if (cats.length === 0) return '';
         let html = '<p class="text-xs font-bold mb-2 mt-1" style="color: var(--color-text-muted); text-transform: uppercase;">Month by Month by Category</p>';
         cats.forEach(cat => {
-            const rows = this.categoryMonthlyTotals(cat.id).slice().reverse();
+            const rows = this.categoryMonthlyTotals(cat.id).filter(r => taxYearMonthSet.has(r.monthKey)).slice().reverse();
             if (rows.length === 0) return;
             const expanded = !!this.expandedReportCategories[cat.id];
             html += '<button onclick="window.app.toggleReportCategoryExpand(\'' + cat.id + '\')" class="w-full flex items-center justify-between p-3 rounded-lg border mb-1" style="background-color: var(--color-surface); border-color: var(--color-border);">';
@@ -617,14 +640,19 @@ class MoneyTracker {
         return html;
     }
     renderReportingTab() {
-        const cs = this.monthlyChangeSummary();
-        let html = '<p class="text-sm mb-3" style="color: var(--color-text-muted);">' + this.monthLabel(this.monthKey()) + '</p>';
+        const startYear = this.reportingTaxYear;
+        const cs = this.taxYearChangeSummary(startYear);
+        let html = '<div class="flex items-center justify-between mb-3">';
+        html += '<button onclick="window.app.shiftReportingTaxYear(-1)" class="w-9 h-9 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">‹</button>';
+        html += '<p class="font-bold" style="color: var(--color-text);">Tax Year ' + this.taxYearLabel(startYear) + '</p>';
+        html += '<button onclick="window.app.shiftReportingTaxYear(1)" class="w-9 h-9 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">›</button>';
+        html += '</div>';
         html += '<div class="grid grid-cols-2 gap-3 mb-4">';
         html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: var(--color-accent); text-transform: uppercase;">Total Balance</p><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmt(this.totalBalance()) + '</p></div>';
         if (cs.recordedCount > 0) {
-            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: ' + (cs.totalChange>=0?'var(--color-success)':'var(--color-error)') + '; text-transform: uppercase;">Change This Month</p><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmtSigned(cs.totalChange) + '</p></div>';
+            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-1" style="color: ' + (cs.totalChange>=0?'var(--color-success)':'var(--color-error)') + '; text-transform: uppercase;">Change This Tax Year</p><p class="text-2xl font-bold" style="color: var(--color-text);">' + this.fmtSigned(cs.totalChange) + '</p></div>';
         } else {
-            html += '<div class="p-4 rounded-lg border flex items-center" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs" style="color: var(--color-text-muted);">No balances recorded yet this month — add them on the Tracking tab.</p></div>';
+            html += '<div class="p-4 rounded-lg border flex items-center" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs" style="color: var(--color-text-muted);">No balances recorded yet this tax year — add them on the Tracking tab.</p></div>';
         }
         html += '</div>';
 
@@ -635,20 +663,21 @@ class MoneyTracker {
         });
         html += '</div>';
 
-        html += this.renderMonthlyByCategorySection();
+        const taxYearMonthSet = new Set(this.taxYearMonths(startYear));
+        html += this.renderMonthlyByCategorySection(taxYearMonthSet);
 
-        const changes = this.biggestChangesThisMonth();
+        const changes = this.biggestChangesForTaxYear(startYear);
         if (changes.length > 0) {
-            html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Biggest Changes This Month</p>';
+            html += '<div class="p-4 rounded-lg border mb-4" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Biggest Changes This Tax Year</p>';
             changes.forEach((c,idx) => {
                 html += '<div class="flex items-center justify-between pb-2' + (idx < changes.length-1?' border-b':'') + '" style="' + (idx < changes.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + c.name + '</span><span class="font-bold" style="color: ' + (c.change>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(c.change) + '</span></div>';
             });
             html += '</div>';
         }
 
-        const tracked = this.trackedAccountsSummary();
+        const tracked = this.trackedAccountsSummaryForTaxYear(startYear);
         if (tracked.length > 0) {
-            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Contributions & Growth (all-time)</p>';
+            html += '<div class="p-4 rounded-lg border" style="background-color: var(--color-surface); border-color: var(--color-border);"><p class="text-xs font-bold mb-3" style="color: var(--color-text-muted); text-transform: uppercase;">Contributions & Growth (' + this.taxYearLabel(startYear) + ')</p>';
             tracked.forEach((t,idx) => {
                 html += '<div class="pb-2' + (idx < tracked.length-1?' border-b mb-2':'') + '" style="' + (idx < tracked.length-1?'border-color: var(--color-border);':'') + '"><p style="color: var(--color-text);">' + t.name + '</p><div class="flex items-center justify-between text-xs" style="color: var(--color-text-muted);"><span>' + this.fmt(t.totalInput) + ' put in</span><span style="color: ' + (t.growth>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(t.growth) + ' growth</span></div></div>';
             });
@@ -672,7 +701,7 @@ class MoneyTracker {
             if (this.addingAccount) html += this.renderAccountForm(null);
             this.accounts.forEach(a => {
                 if (this.editingAccount === a.id) { html += this.renderAccountForm(a); return; }
-                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + (a.isaType ? ' · ' + this.isaTypeLabel(a.isaType) : '') + ', opens ' + this.fmt(a.startingBalance) + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
+                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + (a.isaType ? ' · ' + this.isaTypeLabel(a.isaType) : '') + ', opens ' + this.fmt(a.startingBalance) + (a.openingMonth ? ' as of ' + this.monthLabel(a.openingMonth) : '') + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingAccount) html += '<button onclick="window.app.toggleAddAccount()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account</button>';
         } else if (this.settingsSection === 'accountCategories') {
@@ -720,7 +749,10 @@ class MoneyTracker {
             isaTypeArg = "document.getElementById('ac_isatype').value";
         }
         html += '<input id="ac_start" type="number" step="0.01" placeholder="Opening balance £" value="' + (a?a.startingBalance:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
-        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Opening balance as of</p>';
+        html += '<input id="ac_openingmonth" type="month" value="' + (a && a.openingMonth ? a.openingMonth : this.monthKey()) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">The tracker will not ask for balances before this month.</p>';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
