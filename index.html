@@ -57,6 +57,7 @@ class MoneyTracker {
         this.editingBudget = null;
         this.expandedGroups = { essential: false, saving: false, spending: false };
         this.expandedReportCategories = {};
+        this.expandedTrackingCategories = {};
         this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
         this.trackingMonth = this.monthKey();
         this.migrateLegacyIncomeCategories();
@@ -411,6 +412,14 @@ class MoneyTracker {
                 return sum + (parseFloat(b.monthlyAmount) || 0);
             }, 0);
     }
+    colorForTargetDistance(distance) {
+        // Green when within 2 points of target, grading toward red the further away.
+        const green = [0,184,148], red = [255,71,87];
+        const cap = 15;
+        const t = distance <= 2 ? 0 : Math.min(1, (distance - 2) / (cap - 2));
+        const rgb = [0,1,2].map(i => Math.round(green[i] + (red[i]-green[i]) * t));
+        return 'rgb(' + rgb.join(',') + ')';
+    }
     renderPlanningTab() {
         const totalIncome = this.totalIncome();
         let html = '<p class="text-sm mb-4" style="color: var(--color-text-muted);">Set a monthly budget target for each category, then hit Save. Actuals below reflect ' + this.monthLabel(this.monthKey()) + '.</p>';
@@ -428,9 +437,9 @@ class MoneyTracker {
             let statusColor = 'var(--color-expense)';
             let targetText = '';
             if (pct !== null && target > 0) {
-                const onTrack = key === 'saving' ? (pct >= target) : (pct <= target);
-                statusColor = onTrack ? 'var(--color-success)' : 'var(--color-error)';
-                targetText = ' · target ' + target + '%' + (onTrack ? ' ✓' : '');
+                const distance = Math.abs(pct - target);
+                statusColor = this.colorForTargetDistance(distance);
+                targetText = ' · target ' + target + '%' + (distance <= 2 ? ' ✓' : '');
             }
 
             html += '<button onclick="window.app.toggleGroupExpand(\'' + key + '\')" class="w-full flex items-center justify-between py-3 px-1 mt-3 border-b" style="border-color: var(--color-border);">';
@@ -478,6 +487,38 @@ class MoneyTracker {
     }
 
     // ---------- RENDER: TRACKING ----------
+    accountCategoryColor(categoryId) {
+        const palette = ['#0984E3','#6C5CE7','#00B894','#E17055','#D63031','#00CEC9','#FDCB6E','#E84393','#2D3436','#0FB9B1'];
+        const idx = this.accountCategories.findIndex(c => c.id === categoryId);
+        if (idx === -1) return '#636E72';
+        return palette[idx % palette.length];
+    }
+    toggleTrackingCategoryExpand(id) { this.expandedTrackingCategories[id] = !this.expandedTrackingCategories[id]; this.render(); }
+    renderTrackingAccountRow(a, mk, color) {
+        const entry = this.entryAt(a.id, mk);
+        const prev = this.latestEntryBefore(a.id, mk);
+        const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
+        const diff = entry ? entry.balance - baseline : null;
+        const tracksInput = this.accountTracksInput(a.id);
+        let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+        html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span></div></div>';
+        html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
+        if (tracksInput) {
+            html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Put in £</span><input id="ti_' + a.id + '" type="number" step="0.01" value="' + (entry && entry.input !== undefined ? entry.input : '') + '" placeholder="0.00" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
+        }
+        html += '<button onclick="window.app.saveMonthlyBalance(\'' + a.id + '\', \'' + mk + '\', document.getElementById(\'tb_' + a.id + '\').value' + (tracksInput ? ", document.getElementById('ti_" + a.id + "').value" : '') + ')" class="text-xs px-3 py-2 rounded text-white w-full" style="background-color: ' + color + ';">Save</button>';
+        if (diff !== null) {
+            if (tracksInput) {
+                const monthInput = (entry.input !== undefined) ? (parseFloat(entry.input) || 0) : 0;
+                const growth = diff - monthInput;
+                html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + ' — ' + this.fmt(monthInput) + ' put in, ' + this.fmtSigned(growth) + ' growth</p>';
+            } else {
+                html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + '</p>';
+            }
+        }
+        html += '</div>';
+        return html;
+    }
     renderTrackingTab() {
         const mk = this.trackingMonth;
         let html = '<div class="flex items-center justify-between mb-4">';
@@ -491,29 +532,23 @@ class MoneyTracker {
             return html;
         }
 
-        this.accounts.forEach(a => {
-            const entry = this.entryAt(a.id, mk);
-            const prev = this.latestEntryBefore(a.id, mk);
-            const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
-            const diff = entry ? entry.balance - baseline : null;
-            const tracksInput = this.accountTracksInput(a.id);
-            html += '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-surface); border-color: var(--color-border);">';
-            html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ')</span></div></div>';
-            html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
-            if (tracksInput) {
-                html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Put in £</span><input id="ti_' + a.id + '" type="number" step="0.01" value="' + (entry && entry.input !== undefined ? entry.input : '') + '" placeholder="0.00" class="flex-1 px-2 py-1 rounded border text-sm" style="border-color: var(--color-border);"></div>';
+        const groups = [];
+        this.accountCategories.forEach(cat => {
+            const accs = this.accounts.filter(a => a.categoryId === cat.id);
+            if (accs.length) groups.push({ id: cat.id, name: cat.name, color: this.accountCategoryColor(cat.id), accounts: accs });
+        });
+        const uncategorised = this.accounts.filter(a => !this.accountCategories.some(c => c.id === a.categoryId));
+        if (uncategorised.length) groups.push({ id: '__uncategorised', name: 'Uncategorised', color: this.accountCategoryColor(''), accounts: uncategorised });
+
+        groups.forEach(g => {
+            const total = g.accounts.reduce((s,a) => s + this.balanceAsOf(a.id, mk), 0);
+            const expanded = !!this.expandedTrackingCategories[g.id];
+            html += '<button onclick="window.app.toggleTrackingCategoryExpand(\'' + g.id + '\')" class="w-full flex items-center justify-between py-3 px-1 mt-3 border-b" style="border-color: var(--color-border);">';
+            html += '<span class="text-sm font-bold uppercase flex items-center gap-2" style="color: var(--color-text);">' + (expanded ? '▾ ' : '▸ ') + '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background-color:' + g.color + ';"></span>' + g.name + '</span>';
+            html += '<span class="text-sm font-bold" style="color: var(--color-text);">' + this.fmt(total) + '</span></button>';
+            if (expanded) {
+                g.accounts.forEach(a => { html += this.renderTrackingAccountRow(a, mk, g.color); });
             }
-            html += '<button onclick="window.app.saveMonthlyBalance(\'' + a.id + '\', \'' + mk + '\', document.getElementById(\'tb_' + a.id + '\').value' + (tracksInput ? ", document.getElementById('ti_" + a.id + "').value" : '') + ')" class="text-xs px-3 py-2 rounded text-white w-full" style="background-color: var(--color-primary);">Save</button>';
-            if (diff !== null) {
-                if (tracksInput) {
-                    const monthInput = (entry.input !== undefined) ? (parseFloat(entry.input) || 0) : 0;
-                    const growth = diff - monthInput;
-                    html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + ' — ' + this.fmt(monthInput) + ' put in, ' + this.fmtSigned(growth) + ' growth</p>';
-                } else {
-                    html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + '</p>';
-                }
-            }
-            html += '</div>';
         });
         return html;
     }
