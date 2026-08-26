@@ -56,6 +56,7 @@ class MoneyTracker {
         this.editingTask = null;
         this.editingBudget = null;
         this.expandedGroups = { essential: false, saving: false, spending: false };
+        this.expandedReportCategories = {};
         this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
         this.trackingMonth = this.monthKey();
         this.migrateLegacyIncomeCategories();
@@ -335,6 +336,31 @@ class MoneyTracker {
         });
         return rows.sort((a,b) => Math.abs(b.change) - Math.abs(a.change)).slice(0,5);
     }
+    allMonthKeysSorted() {
+        const s = new Set(this.monthlyBalances.map(e => e.monthKey));
+        return Array.from(s).sort();
+    }
+    balanceAsOf(accountId, mk) {
+        const entry = this.entryAt(accountId, mk);
+        if (entry) return entry.balance;
+        const prev = this.latestEntryBefore(accountId, mk);
+        if (prev) return prev.balance;
+        const acc = this.accounts.find(a => a.id === accountId);
+        return acc ? (parseFloat(acc.startingBalance) || 0) : 0;
+    }
+    toggleReportCategoryExpand(id) { this.expandedReportCategories[id] = !this.expandedReportCategories[id]; this.render(); }
+    categoryMonthlyTotals(categoryId) {
+        const accIds = this.accounts.filter(a => a.categoryId === categoryId).map(a => a.id);
+        const months = this.allMonthKeysSorted();
+        if (accIds.length === 0 || months.length === 0) return [];
+        let prevTotal = null;
+        return months.map(mk => {
+            const total = accIds.reduce((s,id) => s + this.balanceAsOf(id, mk), 0);
+            const diff = prevTotal === null ? null : total - prevTotal;
+            prevTotal = total;
+            return { monthKey: mk, total, diff };
+        });
+    }
     exportCSV() {
         let csv = 'Month,Account,Account Category,Balance\n';
         this.monthlyBalances.slice().sort((a,b) => a.monthKey.localeCompare(b.monthKey) || a.accountId.localeCompare(b.accountId)).forEach(e => {
@@ -493,6 +519,27 @@ class MoneyTracker {
     }
 
     // ---------- RENDER: REPORTING ----------
+    renderMonthlyByCategorySection() {
+        const cats = this.accountCategories.filter(c => this.accounts.some(a => a.categoryId === c.id));
+        if (cats.length === 0) return '';
+        let html = '<p class="text-xs font-bold mb-2 mt-1" style="color: var(--color-text-muted); text-transform: uppercase;">Month by Month by Category</p>';
+        cats.forEach(cat => {
+            const rows = this.categoryMonthlyTotals(cat.id).slice().reverse();
+            if (rows.length === 0) return;
+            const expanded = !!this.expandedReportCategories[cat.id];
+            html += '<button onclick="window.app.toggleReportCategoryExpand(\'' + cat.id + '\')" class="w-full flex items-center justify-between p-3 rounded-lg border mb-1" style="background-color: var(--color-surface); border-color: var(--color-border);">';
+            html += '<span class="font-medium" style="color: var(--color-text);">' + (expanded?'▾ ':'▸ ') + cat.name + '</span>';
+            html += '<span class="font-bold" style="color: var(--color-text);">' + this.fmt(rows[0].total) + '</span></button>';
+            if (expanded) {
+                html += '<div class="mb-2">';
+                rows.forEach((r,idx) => {
+                    html += '<div class="flex items-center justify-between p-2 pl-4' + (idx < rows.length-1?' border-b':'') + '" style="' + (idx < rows.length-1?'border-color: var(--color-border);':'') + '"><span class="text-xs" style="color: var(--color-text-muted);">' + this.monthLabel(r.monthKey) + '</span><div class="flex items-center gap-2"><span class="text-sm" style="color: var(--color-text);">' + this.fmt(r.total) + '</span>' + (r.diff !== null ? '<span class="text-xs" style="color: ' + (r.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(r.diff) + '</span>' : '') + '</div></div>';
+                });
+                html += '</div>';
+            }
+        });
+        return html;
+    }
     renderReportingTab() {
         const cs = this.monthlyChangeSummary();
         let html = '<p class="text-sm mb-3" style="color: var(--color-text-muted);">' + this.monthLabel(this.monthKey()) + '</p>';
@@ -511,6 +558,8 @@ class MoneyTracker {
             html += '<div class="flex items-center justify-between pb-2' + (idx < this.accounts.length-1?' border-b':'') + ' mb-2" style="' + (idx < this.accounts.length-1?'border-color: var(--color-border);':'') + '"><span style="color: var(--color-text);">' + a.name + ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + ')</span></span><span class="font-bold" style="color: var(--color-text);">' + this.fmt(this.accountBalance(a.id)) + '</span></div>';
         });
         html += '</div>';
+
+        html += this.renderMonthlyByCategorySection();
 
         const changes = this.biggestChangesThisMonth();
         if (changes.length > 0) {
