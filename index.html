@@ -86,6 +86,7 @@ class MoneyTracker {
         this.accountFormStartUI = undefined;
         this.accountFormOpeningMonthUI = undefined;
         this.accountFormClosedMonthUI = undefined;
+        this.accountFormLinkedCategoryUI = undefined;
         this.addingAccountCategory = false;
         this.editingAccountCategory = null;
         this.addingCategory = false;
@@ -226,7 +227,7 @@ class MoneyTracker {
     toggleAddAccount() {
         this.addingAccount = !this.addingAccount; this.editingAccount = null;
         this.accountFormCategoryUI = ''; this.accountFormLISAUI = false; this.accountFormClosedUI = false;
-        this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined;
+        this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined; this.accountFormLinkedCategoryUI = undefined;
         this.render();
     }
     toggleEditAccount(id) {
@@ -236,7 +237,7 @@ class MoneyTracker {
             this.accountFormCategoryUI = a ? a.categoryId : '';
             this.accountFormLISAUI = a ? !!a.isLISA : false;
             this.accountFormClosedUI = a ? !!a.closed : false;
-            this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined;
+            this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined; this.accountFormLinkedCategoryUI = undefined;
         }
         this.render();
     }
@@ -245,10 +246,12 @@ class MoneyTracker {
         const startEl = document.getElementById('ac_start');
         const monthEl = document.getElementById('ac_openingmonth');
         const closedMonthEl = document.getElementById('ac_closedmonth');
+        const linkedCatEl = document.getElementById('ac_linkedcategory');
         if (nameEl) this.accountFormNameUI = nameEl.value;
         if (startEl) this.accountFormStartUI = startEl.value;
         if (monthEl) this.accountFormOpeningMonthUI = monthEl.value;
         if (closedMonthEl) this.accountFormClosedMonthUI = closedMonthEl.value;
+        if (linkedCatEl) this.accountFormLinkedCategoryUI = linkedCatEl.value;
     }
     setAccountFormCategory(categoryId) { this.captureAccountFormState(); this.accountFormCategoryUI = categoryId; this.render(); }
     setAccountFormLISA(checked) { this.captureAccountFormState(); this.accountFormLISAUI = checked; this.render(); }
@@ -258,7 +261,7 @@ class MoneyTracker {
         if (cat && cat.trackInput) return true;
         return this.isPensionCategoryId(categoryId) && !!lisaChecked;
     }
-    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth, isLISA, manualGrowth, closed, closedMonth) {
+    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth, isLISA, manualGrowth, closed, closedMonth, linkedCategoryId) {
         if (!name) return;
         const isISA = this.isISACategoryId(categoryId);
         const isPension = this.isPensionCategoryId(categoryId);
@@ -266,12 +269,13 @@ class MoneyTracker {
         const willTrackInput = this.accountWillTrackInput(categoryId, isLISA);
         const isClosed = !!closed;
         const validClosedMonth = isClosed && /^\d{4}-\d{2}$/.test(closedMonth || '') ? closedMonth : (isClosed ? this.currentMonthKey() : undefined);
+        const validLinkedCategoryId = willTrackInput && linkedCategoryId ? linkedCategoryId : undefined;
         if (id) {
             const a = this.accounts.find(x => x.id === id);
-            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; a.isLISA = isPension ? !!isLISA : undefined; a.manualGrowth = willTrackInput ? !!manualGrowth : undefined; a.closed = isClosed; a.closedMonth = validClosedMonth; }
+            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; a.isLISA = isPension ? !!isLISA : undefined; a.manualGrowth = willTrackInput ? !!manualGrowth : undefined; a.closed = isClosed; a.closedMonth = validClosedMonth; a.linkedCategoryId = validLinkedCategoryId; }
             this.editingAccount = null;
         } else {
-            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: willTrackInput ? !!manualGrowth : undefined, closed: isClosed, closedMonth: validClosedMonth });
+            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: willTrackInput ? !!manualGrowth : undefined, closed: isClosed, closedMonth: validClosedMonth, linkedCategoryId: validLinkedCategoryId });
             this.addingAccount = false;
             const groupKey = categoryId || '__uncategorised';
             this.expandedTrackingCategories[groupKey] = true;
@@ -433,6 +437,24 @@ class MoneyTracker {
     }
     linkedCategoriesTotal(task) {
         return (task.linkedCategoryIds || []).reduce((s,catId) => { const c = this.categories.find(x => x.id === catId); return c ? s + this.categoryBudgetAmount(c) : s; }, 0);
+    }
+    copyPlanningAmountsToTracking() {
+        const linkedAccounts = this.accounts.filter(a => a.linkedCategoryId);
+        if (linkedAccounts.length === 0) { alert('No accounts are linked to a planning category yet. Set this up by editing an account in Settings → Tracking → Accounts.'); return; }
+        if (!confirm('This will overwrite the "Put in" amount already entered this month for linked accounts. Continue?')) return;
+        const mk = this.trackingMonth;
+        let count = 0;
+        linkedAccounts.forEach(a => {
+            const cat = this.categories.find(c => c.id === a.linkedCategoryId);
+            if (!cat) return;
+            const amount = this.categoryBudgetAmount(cat);
+            let entry = this.entryAt(a.id, mk);
+            if (!entry) { entry = { id: this.uid(), accountId: a.id, monthKey: mk, balance: this.balanceAsOf(a.id, mk) }; this.monthlyBalances.push(entry); }
+            entry.input = amount;
+            count++;
+        });
+        this.saveData();
+        this.showToast('Copied ' + count + ' amount' + (count === 1 ? '' : 's'));
     }
     saveTask(id, text, orderPos) {
         if (!text) return;
@@ -1069,6 +1091,10 @@ class MoneyTracker {
         html += '<button onclick="window.app.shiftTrackingMonth(12)" class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style="background-color: var(--color-secondary); color: var(--color-text); font-size: 12px;">»</button>';
         html += '</div>';
 
+        if (this.accounts.some(a => a.linkedCategoryId)) {
+            html += '<button onclick="window.app.copyPlanningAmountsToTracking()" class="w-full text-xs font-semibold px-3 py-2 rounded-lg mb-4" style="background-color: var(--color-secondary); color: var(--color-text);">📋➡️🏦 Copy over amounts</button>';
+        }
+
         if (this.accounts.length === 0) {
             html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No accounts yet. Add one below.</p>';
         } else {
@@ -1358,10 +1384,19 @@ class MoneyTracker {
             lisaArg = "document.getElementById('ac_lisa').checked";
         }
         let manualGrowthArg = 'false';
-        if (this.accountWillTrackInput(categoryUI, this.accountFormLISAUI)) {
+        const willTrackInput = this.accountWillTrackInput(categoryUI, this.accountFormLISAUI);
+        if (willTrackInput) {
             html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="ac_manualgrowth" type="checkbox" ' + (a && a.manualGrowth ? 'checked' : '') + '> Enter interest/growth manually?</label>';
             html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">If ticked, you will type the interest/growth each month on Tracking instead of it being calculated as balance change minus what you put in.</p>';
             manualGrowthArg = "document.getElementById('ac_manualgrowth').checked";
+        }
+        let linkedCategoryArg = 'null';
+        if (willTrackInput) {
+            const linkedUI = this.accountFormLinkedCategoryUI !== undefined ? this.accountFormLinkedCategoryUI : (a && a.linkedCategoryId ? a.linkedCategoryId : '');
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Link to planning category (optional)</p>';
+            html += '<select id="ac_linkedcategory" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="">None</option>' + this.categories.map(c => '<option value="' + c.id + '"' + (linkedUI===c.id?' selected':'') + '>' + c.name + '</option>').join('') + '</select>';
+            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Lets you use "Copy over amounts" on Tracking to fill this account\'s "Put in" figure straight from that category\'s planning budget.</p>';
+            linkedCategoryArg = "document.getElementById('ac_linkedcategory').value";
         }
         html += '<input id="ac_start" type="number" step="0.01" placeholder="Opening balance £" value="' + (this.accountFormStartUI !== undefined ? this.accountFormStartUI : (a?a.startingBalance:'')) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Opening balance as of</p>';
@@ -1375,7 +1410,7 @@ class MoneyTracker {
             html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">The tracker will not ask for balances after this month.</p>';
             closedMonthArg = "document.getElementById('ac_closedmonth').value";
         }
-        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ', document.getElementById(\'ac_closed\').checked, ' + closedMonthArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ', document.getElementById(\'ac_closed\').checked, ' + closedMonthArg + ', ' + linkedCategoryArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
@@ -1493,7 +1528,9 @@ class MoneyTracker {
             { icon: '🏦', title: 'ISA Allowance tracker', desc: 'Reporting shows how much of your £20,000 annual ISA allowance you have used, based on your ISA and LISA contributions for the selected tax year.' },
             { icon: '💷', title: 'Payday-based months', desc: 'In Settings → Income, switch "Current Month" from Calendar to Payday and set your pay date — e.g. the 23rd to the 22nd counts as one month, instead of the calendar month.' },
             { icon: '📄', title: 'PDF Report', desc: 'Settings → Reporting → PDF Report lets you generate a printable report filtered by year, month, and account — handy for record-keeping or sharing.' },
-            { icon: '🔗', title: 'Link tasks to Planning', desc: 'Turn on "Link tasks to planning amounts" in Settings → Monthly Tasks, then attach Planning categories to a task like "Transfer to savings" — its total updates automatically.' },
+            { icon: '🔗', title: 'Link tasks to Planning', desc: 'Turn on "Link tasks to planning amounts" in Settings → Monthly Tasks, then attach Planning categories to a task like "Transfer to savings". Its total updates automatically, so you always know exactly how much to move without doing the maths yourself each month.' },
+            { icon: '📋➡️🏦', title: 'Copy Planning amounts into Tracking', desc: 'In an account settings screen, link it to a Planning category (only shown for accounts that track input). On Tracking, a "Copy over amounts" button fills that account "Put in" figure straight from your Planning budget for the month you are viewing — no retyping the same number twice.' },
+            { icon: '🔕', title: 'Turn off end of month comments', desc: 'If the "How did it go?" prompt on Tracking is not for you, turn it off in Settings → Tracking → Accounts.' },
             { icon: '👉', title: 'Swipe to go back', desc: 'Swipe right anywhere on the screen to go back to whatever page you were on before — no need to hunt for a back button.' },
             { icon: '🔒', title: 'Closed accounts', desc: 'Mark an account as closed with a date in its settings, and Tracking will stop asking for new balances on it after that month.' },
             { icon: '📅', title: 'Tax year navigation', desc: 'Reporting runs on the UK tax year (6 April – 5 April), not the calendar year — use the ‹ › arrows there to move between tax years.' },
@@ -1540,8 +1577,6 @@ class MoneyTracker {
             html += '</div>';
         });
         html += '</div>';
-
-        html += '<div class="p-3 rounded-xl mb-2" style="background-color: var(--color-tasks-bg);"><p class="text-xs" style="color: var(--color-text);">💡 Tip: every month, Tracking asks you an end of month comment — how did it go? If that is not for you, turn it off anytime in <strong>Settings → Tracking → Accounts</strong>.</p></div>';
 
         html += '<button onclick="window.app.markSetupComplete()" class="w-full mt-3 text-sm font-semibold underline text-center py-2" style="color: var(--color-accent);">Mark setup guide as complete</button>';
         return html;
