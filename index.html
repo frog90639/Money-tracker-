@@ -1083,7 +1083,16 @@ class MoneyTracker {
     }
     renderTrackingTab() {
         const mk = this.trackingMonth;
-        let html = '<div class="flex items-center justify-between mb-4 gap-1">';
+        let html = '';
+        if (this.accounts.length > 0) {
+            const netWorth = this.monthTotalAndDiff(this.accounts, mk);
+            html += '<div class="p-5 rounded-3xl shadow-sm mb-4 hero-gradient">';
+            html += '<div class="flex items-center gap-2 mb-1"><span>💷</span><span class="text-xs font-bold uppercase tracking-wide" style="color: rgba(255,255,255,0.85);">Net Worth</span></div>';
+            html += '<p class="text-4xl font-extrabold text-white">' + this.fmt(netWorth.total) + '</p>';
+            html += '<p class="text-sm mt-1 font-medium" style="color: white;">' + this.fmtSigned(netWorth.diff) + this.changeArrow(netWorth.diff) + ' vs ' + this.monthLabel(this.shiftMonthKey(mk,-1)) + '</p>';
+            html += '</div>';
+        }
+        html += '<div class="flex items-center justify-between mb-4 gap-1">';
         html += '<button onclick="window.app.shiftTrackingMonth(-12)" class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style="background-color: var(--color-secondary); color: var(--color-text); font-size: 12px;">«</button>';
         html += '<button onclick="window.app.shiftTrackingMonth(-1)" class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style="background-color: var(--color-secondary); color: var(--color-text);">‹</button>';
         html += '<p class="font-bold flex-1 text-center" style="color: var(--color-text);">' + this.monthLabel(mk) + '</p>';
@@ -1553,6 +1562,7 @@ class MoneyTracker {
     renderStartHereTab() {
         const tasks = [
             { title: 'Set your salary', desc: 'So Planning can work out your section percentages.', done: (parseFloat(this.income.salary) || 0) > 0, action: "window.app.navigateToSettings('planning','income')" },
+            { title: 'Define your planning categories', desc: 'Check the defaults (Housing, Groceries, Savings…) match what you budget for.', done: this.categories.length !== 8, action: "window.app.navigateToSettings('planning','categories')" },
             { title: 'Define account types', desc: 'Check the defaults (Bank, ISA, Pension…) match what you need.', done: this.accountCategories.length !== 7, action: "window.app.navigateToSettings('tracking','accountCategories')" },
             { title: 'Add your accounts', desc: 'Bank, savings, ISAs — whatever you want to track.', done: this.accounts.length > 0, action: "window.app.navigateTo('tracking')" },
             { title: 'Set a planning target', desc: 'Give at least one category an amount on the Planning tab.', done: this.budgets.length > 0, action: "window.app.navigateTo('planning')" },
