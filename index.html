@@ -259,6 +259,8 @@ class MoneyTracker {
         } else {
             this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: willTrackInput ? !!manualGrowth : undefined });
             this.addingAccount = false;
+            const groupKey = categoryId || '__uncategorised';
+            this.expandedTrackingCategories[groupKey] = true;
         }
         this.saveData(); this.showToast('Account saved');
     }
@@ -1436,6 +1438,7 @@ class MoneyTracker {
     renderStartHereTab() {
         const tasks = [
             { title: 'Set your salary', desc: 'So Planning can work out your section percentages.', done: (parseFloat(this.income.salary) || 0) > 0, action: "window.app.navigateToSettings('planning','income')" },
+            { title: 'Define account types', desc: 'Check the defaults (Bank, ISA, Pension…) match what you need.', done: this.accountCategories.length !== 7, action: "window.app.navigateToSettings('tracking','accountCategories')" },
             { title: 'Add your accounts', desc: 'Bank, savings, ISAs — whatever you want to track.', done: this.accounts.length > 0, action: "window.app.navigateTo('tracking')" },
             { title: 'Set a planning target', desc: 'Give at least one category an amount on the Planning tab.', done: this.budgets.length > 0, action: "window.app.navigateTo('planning')" },
             { title: 'Add a monthly task', desc: 'Reminders like Enter salary or Transfer to savings.', done: this.tasks.length > 0, action: "window.app.navigateToSettings('planning','tasks')" },
