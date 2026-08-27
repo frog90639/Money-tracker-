@@ -45,6 +45,8 @@
         .sidebar-backdrop { animation: fadeIn 0.2s ease-out; }
         .expand-content { animation: fadeSlideDown 0.2s ease-out; }
         .hero-gradient { background: linear-gradient(135deg, #00B894 0%, #00D8A8 100%); }
+        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+        .toast { animation: toastIn 0.2s ease-out; }
     </style>
 </head>
 <body>
@@ -64,8 +66,10 @@ class MoneyTracker {
         this.paydayDay = data?.paydayDay || 25;
         this.linkTasksToPlanning = data?.linkTasksToPlanning || false;
         this.setupGuideCompleted = data?.setupGuideCompleted || false;
+        this.toast = null;
         this.groupTargets = data?.groupTargets || { essential: 50, saving: 30, spending: 20 };
         this.currentTab = 'home';
+        this.navHistory = [];
         this.sidebarOpen = false;
         this.settingsSection = 'accounts';
         this.expandedSettingsGroups = { planning: false, tracking: false, reporting: false };
@@ -147,6 +151,12 @@ class MoneyTracker {
     categoryGroup(c) { return c.group || 'spending'; }
     loadData() { try { return JSON.parse(localStorage.getItem('moneyTrackerData')); } catch(e) { return null; } }
     saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning, currentMonthMode: this.currentMonthMode, paydayDay: this.paydayDay, setupGuideCompleted: this.setupGuideCompleted})); } catch(e) {} }
+    showToast(message) {
+        this.toast = message;
+        this.render();
+        clearTimeout(this._toastTimer);
+        this._toastTimer = setTimeout(() => { this.toast = null; this.render(); }, 1600);
+    }
     uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
     fmt(n) { const v = isNaN(n) ? 0 : n; return '£' + v.toFixed(2); }
     fmtSigned(n) { const v = isNaN(n) ? 0 : n; return (v >= 0 ? '+' : '−') + '£' + Math.abs(v).toFixed(2); }
@@ -164,7 +174,7 @@ class MoneyTracker {
     setCurrentMonthMode(mode) { this.currentMonthMode = mode; this.saveData(); this.render(); }
     savePaydayDay(value) {
         this.paydayDay = Math.min(31, Math.max(1, parseInt(value) || 1));
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     taxYearStartForMonthKey(mk) { const [y,m] = mk.split('-').map(Number); return m >= 4 ? y : y - 1; }
     taxYearMonths(startYear) {
@@ -241,7 +251,7 @@ class MoneyTracker {
             this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: willTrackInput ? !!manualGrowth : undefined });
             this.addingAccount = false;
         }
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Account saved');
     }
     deleteAccount(id) {
         if (!confirm('Delete this account? Its monthly balance history will also be removed.')) return;
@@ -263,7 +273,7 @@ class MoneyTracker {
             this.accountCategories.push({ id: this.uid(), name, trackInput: !!trackInput });
             this.addingAccountCategory = false;
         }
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     deleteAccountCategory(id) {
         if (!confirm('Delete this account type? Accounts using it will become uncategorised.')) return;
@@ -294,7 +304,7 @@ class MoneyTracker {
             this.addingCategory = false;
             this.expandedGroups[group || 'spending'] = true;
         }
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     deleteCategory(id) {
         if (!confirm('Delete this planning category? Budgets for it will also be removed.')) return;
@@ -313,13 +323,13 @@ class MoneyTracker {
         this.income.otherIncomeEnabled = !!otherEnabled;
         this.income.otherIncomeAmount = otherEnabled ? (parseFloat(otherAmount) || 0) : 0;
         this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     saveGroupTargets(essential, saving, spending) {
         this.groupTargets.essential = parseFloat(essential) || 0;
         this.groupTargets.saving = parseFloat(saving) || 0;
         this.groupTargets.spending = parseFloat(spending) || 0;
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     toggleEditGroupTargetsInline() { this.editingGroupTargetsInline = !this.editingGroupTargetsInline; this.render(); }
     saveGroupTargetsInline() {
@@ -339,7 +349,7 @@ class MoneyTracker {
         this.editingBudget = null;
         if (!b) { b = { categoryId, percentage: pct }; this.budgets.push(b); }
         else { b.percentage = pct; }
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     setBudget(categoryId, amount) {
         const amt = parseFloat(amount) || 0;
@@ -347,7 +357,7 @@ class MoneyTracker {
         this.editingBudget = null;
         if (!b) { b = { categoryId, monthlyAmount: amt }; this.budgets.push(b); }
         else { b.monthlyAmount = amt; }
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     getSubItems(categoryId) { const b = this.getBudget(categoryId); return (b && b.subItems) || []; }
     subItemsTotal(categoryId) { return this.getSubItems(categoryId).reduce((s,i) => s + (parseFloat(i.amount) || 0), 0); }
@@ -419,7 +429,7 @@ class MoneyTracker {
             this.tasks.splice(insertAt, 0, t);
             this.addingTask = false;
         }
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     deleteTask(id) {
         if (!confirm('Delete this recurring task?')) return;
@@ -462,7 +472,7 @@ class MoneyTracker {
         if (inputStr !== undefined && inputStr !== null) entry.input = parseFloat(inputStr) || 0;
         if (growthStr !== undefined && growthStr !== null) entry.growth = parseFloat(growthStr) || 0;
         this.editingTrackingBalance = null;
-        this.saveData(); this.render();
+        this.saveData(); this.showToast('Saved');
     }
     totalInputForAccount(accountId) {
         return this.monthlyBalances.filter(e => e.accountId === accountId).reduce((s,e) => s + (parseFloat(e.input) || 0), 0);
@@ -913,7 +923,7 @@ class MoneyTracker {
     }
     // ---------- MONTHLY REVIEW ----------
     shiftReviewMonth(delta) { this.reviewMonth = this.shiftMonthKey(this.reviewMonth, delta); this.render(); }
-    saveMonthlyComment(mk, text) { this.monthlyComments[mk] = text; this.saveData(); this.render(); }
+    saveMonthlyComment(mk, text) { this.monthlyComments[mk] = text; this.saveData(); this.showToast('Comment saved'); }
     monthTotalAndDiff(accounts, mk) {
         const prevMk = this.shiftMonthKey(mk, -1);
         const total = accounts.reduce((s,a) => s + this.balanceAsOf(a.id, mk), 0);
@@ -927,6 +937,7 @@ class MoneyTracker {
     }
     // ---------- RENDER: HOME ----------
     renderHomeTab() {
+        if (!this.setupGuideCompleted) return this.renderStartHereTab();
         const mk = this.currentMonthKey();
         let html = '<p class="text-sm mb-4" style="color: var(--color-text-muted);">' + this.monthLabel(mk) + '</p>';
 
@@ -1392,12 +1403,25 @@ class MoneyTracker {
     }
 
     toggleSidebar() { this.sidebarOpen = !this.sidebarOpen; this.render(); }
-    navigateTo(tab) { this.currentTab = tab; this.sidebarOpen = false; this.render(); }
+    navigateTo(tab) {
+        if (tab === this.currentTab) { this.sidebarOpen = false; this.render(); return; }
+        this.navHistory.push(this.currentTab);
+        this.currentTab = tab;
+        this.sidebarOpen = false;
+        this.render();
+    }
     navigateToSettings(groupKey, sectionKey) {
+        if (this.currentTab !== 'settings') this.navHistory.push(this.currentTab);
         this.currentTab = 'settings';
         this.sidebarOpen = false;
         this.expandedSettingsGroups[groupKey] = true;
         this.settingsSection = sectionKey;
+        this.render();
+    }
+    goBack() {
+        if (this.navHistory.length === 0) return;
+        this.currentTab = this.navHistory.pop();
+        this.sidebarOpen = false;
         this.render();
     }
     renderStartHereTab() {
@@ -1471,6 +1495,9 @@ class MoneyTracker {
         html += '</div></div>';
         html += '<div class="max-w-4xl mx-auto px-4 py-6 pb-20">' + content + '</div>';
         html += this.renderSidebar();
+        if (this.toast) {
+            html += '<div class="toast fixed z-50" style="bottom: 90px; left: 50%; transform: translateX(-50%); background-color: var(--color-text); color: white; padding: 10px 20px; border-radius: 999px; font-size: 14px; font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,0.25); white-space: nowrap;">✓ ' + this.toast + '</div>';
+        }
         html += '</div>';
 
         document.getElementById('app').innerHTML = html;
@@ -1478,6 +1505,24 @@ class MoneyTracker {
 }
 
 window.app = new MoneyTracker();
+
+// Swipe right anywhere on screen to go back to the previous page.
+(function() {
+    let touchStartX = 0, touchStartY = 0;
+    document.addEventListener('touchstart', (e) => {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        const deltaX = touchEndX - touchStartX;
+        const deltaY = touchEndY - touchStartY;
+        if (deltaX > 80 && Math.abs(deltaY) < 60) {
+            window.app.goBack();
+        }
+    }, { passive: true });
+})();
     </script>
 </body>
 </html>
