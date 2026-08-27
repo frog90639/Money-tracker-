@@ -63,9 +63,9 @@ class MoneyTracker {
         this.currentMonthMode = data?.currentMonthMode || 'calendar';
         this.paydayDay = data?.paydayDay || 25;
         this.linkTasksToPlanning = data?.linkTasksToPlanning || false;
+        this.setupGuideCompleted = data?.setupGuideCompleted || false;
         this.groupTargets = data?.groupTargets || { essential: 50, saving: 30, spending: 20 };
         this.currentTab = 'home';
-        this.showSettings = false;
         this.sidebarOpen = false;
         this.settingsSection = 'accounts';
         this.expandedSettingsGroups = { planning: false, tracking: false, reporting: false };
@@ -73,6 +73,9 @@ class MoneyTracker {
         this.editingAccount = null;
         this.accountFormCategoryUI = '';
         this.accountFormLISAUI = false;
+        this.accountFormNameUI = undefined;
+        this.accountFormStartUI = undefined;
+        this.accountFormOpeningMonthUI = undefined;
         this.addingAccountCategory = false;
         this.editingAccountCategory = null;
         this.addingCategory = false;
@@ -134,6 +137,7 @@ class MoneyTracker {
         return [
             { id: 'ac_bank', name: 'Bank' },
             { id: 'ac_savings', name: 'Savings' },
+            { id: 'ac_isa', name: 'ISA', trackInput: true },
             { id: 'ac_investment', name: 'Investment' },
             { id: 'ac_pension', name: 'Pension' },
             { id: 'ac_property', name: 'Property' },
@@ -142,7 +146,7 @@ class MoneyTracker {
     }
     categoryGroup(c) { return c.group || 'spending'; }
     loadData() { try { return JSON.parse(localStorage.getItem('moneyTrackerData')); } catch(e) { return null; } }
-    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning, currentMonthMode: this.currentMonthMode, paydayDay: this.paydayDay})); } catch(e) {} }
+    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning, currentMonthMode: this.currentMonthMode, paydayDay: this.paydayDay, setupGuideCompleted: this.setupGuideCompleted})); } catch(e) {} }
     uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
     fmt(n) { const v = isNaN(n) ? 0 : n; return '£' + v.toFixed(2); }
     fmtSigned(n) { const v = isNaN(n) ? 0 : n; return (v >= 0 ? '+' : '−') + '£' + Math.abs(v).toFixed(2); }
@@ -192,14 +196,32 @@ class MoneyTracker {
     isISACategoryId(catId) { const c = this.accountCategories.find(x => x.id === catId); return !!(c && /isa/i.test(c.name.trim())); }
     isPensionCategoryId(catId) { const c = this.accountCategories.find(x => x.id === catId); return !!(c && /pension/i.test(c.name.trim())); }
     isaTypeLabel(isaType) { return isaType === 'stocks_and_shares' ? 'Stocks and Shares' : 'Cash'; }
-    toggleAddAccount() { this.addingAccount = !this.addingAccount; this.editingAccount = null; this.accountFormCategoryUI = ''; this.accountFormLISAUI = false; this.render(); }
-    toggleEditAccount(id) {
-        this.editingAccount = this.editingAccount === id ? null : id;
-        if (this.editingAccount) { const a = this.accounts.find(x => x.id === id); this.accountFormCategoryUI = a ? a.categoryId : ''; this.accountFormLISAUI = a ? !!a.isLISA : false; }
+    toggleAddAccount() {
+        this.addingAccount = !this.addingAccount; this.editingAccount = null;
+        this.accountFormCategoryUI = ''; this.accountFormLISAUI = false;
+        this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined;
         this.render();
     }
-    setAccountFormCategory(categoryId) { this.accountFormCategoryUI = categoryId; this.render(); }
-    setAccountFormLISA(checked) { this.accountFormLISAUI = checked; this.render(); }
+    toggleEditAccount(id) {
+        this.editingAccount = this.editingAccount === id ? null : id;
+        if (this.editingAccount) {
+            const a = this.accounts.find(x => x.id === id);
+            this.accountFormCategoryUI = a ? a.categoryId : '';
+            this.accountFormLISAUI = a ? !!a.isLISA : false;
+            this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined;
+        }
+        this.render();
+    }
+    captureAccountFormState() {
+        const nameEl = document.getElementById('ac_name');
+        const startEl = document.getElementById('ac_start');
+        const monthEl = document.getElementById('ac_openingmonth');
+        if (nameEl) this.accountFormNameUI = nameEl.value;
+        if (startEl) this.accountFormStartUI = startEl.value;
+        if (monthEl) this.accountFormOpeningMonthUI = monthEl.value;
+    }
+    setAccountFormCategory(categoryId) { this.captureAccountFormState(); this.accountFormCategoryUI = categoryId; this.render(); }
+    setAccountFormLISA(checked) { this.captureAccountFormState(); this.accountFormLISAUI = checked; this.render(); }
     accountWillTrackInput(categoryId, lisaChecked) {
         const cat = this.accountCategories.find(c => c.id === categoryId);
         if (cat && cat.trackInput) return true;
@@ -244,7 +266,7 @@ class MoneyTracker {
         this.saveData(); this.render();
     }
     deleteAccountCategory(id) {
-        if (!confirm('Delete this account category? Accounts using it will become uncategorised.')) return;
+        if (!confirm('Delete this account type? Accounts using it will become uncategorised.')) return;
         this.accountCategories = this.accountCategories.filter(c => c.id !== id);
         this.accounts.forEach(a => { if (a.categoryId === id) a.categoryId = ''; });
         if (this.editingAccountCategory === id) this.editingAccountCategory = null;
@@ -538,7 +560,7 @@ class MoneyTracker {
         });
     }
     exportCSV() {
-        let csv = 'Month,Account,Account Category,Balance\n';
+        let csv = 'Month,Account,Account Type,Balance\n';
         this.monthlyBalances.slice().sort((a,b) => a.monthKey.localeCompare(b.monthKey) || a.accountId.localeCompare(b.accountId)).forEach(e => {
             const acc = this.accounts.find(a => a.id === e.accountId);
             const catName = acc ? this.accountCategoryName(acc.categoryId) : '';
@@ -1178,19 +1200,21 @@ class MoneyTracker {
 
     // ---------- RENDER: SETTINGS ----------
     renderSettings() {
-        let html = '<div class="max-w-4xl mx-auto px-4 py-4 border-t" style="border-color: var(--color-border); background-color: var(--color-surface);"><h3 class="font-semibold mb-3" style="color: var(--color-text);">Settings</h3>';
+        let html = '';
 
         const groups = [
             ['planning', 'Planning', [['categories','Planning Categories'],['income','Income'],['tasks','Monthly Tasks']]],
-            ['tracking', 'Tracking', [['accounts','Accounts'],['accountCategories','Account Categories']]],
+            ['tracking', 'Tracking', [['accounts','Accounts'],['accountCategories','Account Types']]],
             ['reporting', 'Reporting', [['pdf','PDF Report']]]
         ];
         groups.forEach(([groupKey, groupLabel, sections]) => {
             const expanded = !!this.expandedSettingsGroups[groupKey];
-            html += '<button onclick="window.app.toggleSettingsGroup(\'' + groupKey + '\')" class="w-full flex items-center justify-between py-3 px-1 border-b" style="border-color: var(--color-border);">';
-            html += '<span class="text-sm font-bold uppercase" style="color: var(--color-text);">' + (expanded ? '▾ ' : '▸ ') + groupLabel + '</span></button>';
+            html += '<div class="rounded-2xl shadow-sm mb-3 overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+            html += '<button onclick="window.app.toggleSettingsGroup(\'' + groupKey + '\')" class="w-full flex items-center justify-between p-4">';
+            html += '<span class="text-base font-bold" style="color: var(--color-text);">' + (expanded ? '▾ ' : '▸ ') + groupLabel + '</span></button>';
             if (expanded) {
-                html += '<div class="flex gap-2 mb-3 mt-3 flex-wrap">';
+                html += '<div class="expand-content px-4 pb-4" style="border-top: 1px solid var(--color-border); padding-top: 12px;">';
+                html += '<div class="flex gap-2 mb-3 flex-wrap">';
                 sections.forEach(([secKey, secLabel]) => {
                     html += '<button onclick="window.app.settingsSection=\'' + secKey + '\'; window.app.render()" class="px-3 py-1 rounded-full text-sm" style="background-color: ' + (this.settingsSection===secKey?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.settingsSection===secKey?'var(--color-primary-text)':'var(--color-text)') + ';">' + secLabel + '</button>';
                 });
@@ -1201,10 +1225,11 @@ class MoneyTracker {
                 const currentBelongs = sections.some(([k]) => k === this.settingsSection);
                 const activeSection = currentBelongs ? this.settingsSection : sections[0][0];
                 html += this.renderSettingsSectionContent(activeSection);
+                html += '</div>';
             }
+            html += '</div>';
         });
 
-        html += '<button onclick="window.app.toggleSettings()" class="w-full mt-4 py-2 rounded-lg" style="background-color: var(--color-secondary); color: var(--color-text);">Close Settings</button></div>';
         return html;
     }
     renderSettingsSectionContent(section) {
@@ -1222,7 +1247,7 @@ class MoneyTracker {
                 if (this.editingAccountCategory === c.id) { html += this.renderAccountCategoryForm(c); return; }
                 html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><span style="color: var(--color-text);">' + c.name + (c.trackInput ? ' <span class="text-xs" style="color: var(--color-text-muted);">(tracks input)</span>' : '') + '</span><div class="flex gap-1"><button onclick="window.app.toggleEditAccountCategory(\'' + c.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccountCategory(\'' + c.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
-            if (!this.addingAccountCategory) html += '<button onclick="window.app.toggleAddAccountCategory()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account Category</button>';
+            if (!this.addingAccountCategory) html += '<button onclick="window.app.toggleAddAccountCategory()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account Type</button>';
         } else if (section === 'categories') {
             if (this.addingCategory) html += this.renderCategoryForm(null);
             this.categories.forEach(c => {
@@ -1251,9 +1276,9 @@ class MoneyTracker {
         const isEdit = !!a;
         const categoryUI = this.accountFormCategoryUI !== undefined && this.accountFormCategoryUI !== '' ? this.accountFormCategoryUI : (a ? a.categoryId : (this.accountCategories[0] ? this.accountCategories[0].id : ''));
         let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
-        html += '<input id="ac_name" placeholder="Account name" value="' + (a?a.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<input id="ac_name" placeholder="Account name" value="' + (this.accountFormNameUI !== undefined ? this.accountFormNameUI : (a?a.name:'')) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         if (this.accountCategories.length === 0) {
-            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Add an account category first in Settings → Account Categories.</p>';
+            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Add an account type first in Settings → Account Types.</p>';
             html += '<input type="hidden" id="ac_category" value="">';
         } else {
             html += '<select id="ac_category" onchange="window.app.setAccountFormCategory(this.value)" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">' + this.accountCategories.map(c => '<option value="' + c.id + '"' + (categoryUI===c.id?' selected':'') + '>' + c.name + '</option>').join('') + '</select>';
@@ -1276,9 +1301,9 @@ class MoneyTracker {
             html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">If ticked, you will type the interest/growth each month on Tracking instead of it being calculated as balance change minus what you put in.</p>';
             manualGrowthArg = "document.getElementById('ac_manualgrowth').checked";
         }
-        html += '<input id="ac_start" type="number" step="0.01" placeholder="Opening balance £" value="' + (a?a.startingBalance:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<input id="ac_start" type="number" step="0.01" placeholder="Opening balance £" value="' + (this.accountFormStartUI !== undefined ? this.accountFormStartUI : (a?a.startingBalance:'')) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Opening balance as of</p>';
-        html += '<input id="ac_openingmonth" type="month" value="' + (a && a.openingMonth ? a.openingMonth : this.currentMonthKey()) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<input id="ac_openingmonth" type="month" value="' + (this.accountFormOpeningMonthUI !== undefined ? this.accountFormOpeningMonthUI : (a && a.openingMonth ? a.openingMonth : this.currentMonthKey())) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">The tracker will not ask for balances before this month.</p>';
         html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
@@ -1287,7 +1312,7 @@ class MoneyTracker {
     renderAccountCategoryForm(c) {
         const isEdit = !!c;
         let html = '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
-        html += '<input id="acc_name" placeholder="Account category name (e.g. Bank, Investment)" value="' + (c?c.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<input id="acc_name" placeholder="Account type name (e.g. Bank, Investment)" value="' + (c?c.name:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="acc_trackinput" type="checkbox" ' + (c && c.trackInput ? 'checked' : '') + '> Track amount put in / interest gained for this category</label>';
         html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Useful for things like ISAs — track deposits separately from balance growth.</p>';
         html += '<div class="flex gap-2"><button onclick="window.app.saveAccountCategory(' + (isEdit?"'"+c.id+"'":'null') + ', document.getElementById(\'acc_name\').value, document.getElementById(\'acc_trackinput\').checked)" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
@@ -1326,6 +1351,13 @@ class MoneyTracker {
         html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Spending %</p><input id="gt_spending" type="number" step="1" value="' + this.groupTargets.spending + '" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">';
         html += '<button onclick="window.app.saveGroupTargets(document.getElementById(\'gt_essential\').value, document.getElementById(\'gt_saving\').value, document.getElementById(\'gt_spending\').value)" class="w-full py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '</div>';
+        if (this.setupGuideCompleted) {
+            html += '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
+            html += '<p class="text-sm font-semibold mb-2" style="color: var(--color-text);">Setup Guide</p>';
+            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">You marked the Start Here guide as complete, so it is hidden from the menu.</p>';
+            html += '<button onclick="window.app.resetSetupGuide()" class="w-full py-2 rounded text-sm font-semibold" style="background-color: var(--color-secondary); color: var(--color-text);">Show Start Here again</button>';
+            html += '</div>';
+        }
         return html;
     }
     renderCategoryForm(c) {
@@ -1349,7 +1381,6 @@ class MoneyTracker {
         return html;
     }
 
-    toggleSettings() { this.showSettings = !this.showSettings; this.render(); }
     toggleSettingsGroup(key) {
         const opening = !this.expandedSettingsGroups[key];
         this.expandedSettingsGroups[key] = opening;
@@ -1362,37 +1393,83 @@ class MoneyTracker {
 
     toggleSidebar() { this.sidebarOpen = !this.sidebarOpen; this.render(); }
     navigateTo(tab) { this.currentTab = tab; this.sidebarOpen = false; this.render(); }
-    openSettingsFromSidebar() { this.sidebarOpen = false; this.showSettings = true; this.render(); }
+    navigateToSettings(groupKey, sectionKey) {
+        this.currentTab = 'settings';
+        this.sidebarOpen = false;
+        this.expandedSettingsGroups[groupKey] = true;
+        this.settingsSection = sectionKey;
+        this.render();
+    }
+    renderStartHereTab() {
+        const tasks = [
+            { title: 'Set your salary', desc: 'So Planning can work out your section percentages.', done: (parseFloat(this.income.salary) || 0) > 0, action: "window.app.navigateToSettings('planning','income')" },
+            { title: 'Add your accounts', desc: 'Bank, savings, ISAs — whatever you want to track.', done: this.accounts.length > 0, action: "window.app.navigateTo('tracking')" },
+            { title: 'Set a planning target', desc: 'Give at least one category an amount on the Planning tab.', done: this.budgets.length > 0, action: "window.app.navigateTo('planning')" },
+            { title: 'Add a monthly task', desc: 'Reminders like Enter salary or Transfer to savings.', done: this.tasks.length > 0, action: "window.app.navigateToSettings('planning','tasks')" },
+            { title: 'Enter this months balances', desc: 'Log where your accounts stand right now.', done: this.monthlyBalances.some(e => e.monthKey === this.currentMonthKey()), action: "window.app.navigateTo('tracking')" }
+        ];
+        const doneCount = tasks.filter(t => t.done).length;
+
+        let html = '<div class="p-5 rounded-3xl shadow-sm mb-4 hero-gradient">';
+        html += '<p class="text-2xl font-extrabold text-white mb-1">👋 Welcome</p>';
+        html += '<p class="text-sm" style="color: rgba(255,255,255,0.9);">Here is how Money Tracker fits together: <strong>Planning</strong> sets your budget, <strong>Tracking</strong> logs your account balances each month, and <strong>Reporting</strong> shows how things are going. Time to get set up.</p>';
+        html += '</div>';
+
+        html += '<div class="rounded-2xl shadow-sm overflow-hidden mb-2" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        html += '<div class="flex items-center justify-between p-4 pb-2"><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Setup Checklist</span><span class="text-xs font-bold" style="color: var(--color-primary);">' + doneCount + ' of ' + tasks.length + '</span></div>';
+        tasks.forEach((t,idx) => {
+            html += '<div class="flex items-center gap-3 p-4 pt-2' + (idx < tasks.length-1?' border-b':'') + '" style="border-color: var(--color-border);">';
+            html += '<span class="flex items-center justify-center rounded-full flex-shrink-0" style="width: 28px; height: 28px; background-color: ' + (t.done ? 'var(--color-primary)' : 'var(--color-bg)') + '; color: ' + (t.done ? 'white' : 'var(--color-text-muted)') + '; border: 1px solid ' + (t.done ? 'var(--color-primary)' : 'var(--color-border)') + ';">' + (t.done ? '✓' : '') + '</span>';
+            html += '<div class="flex-1"><p class="font-medium" style="color: var(--color-text);">' + t.title + '</p><p class="text-xs" style="color: var(--color-text-muted);">' + t.desc + '</p></div>';
+            if (!t.done) html += '<button onclick="' + t.action + '" class="text-xs font-semibold px-3 py-2 rounded-lg text-white flex-shrink-0" style="background-color: var(--color-primary);">Take me there</button>';
+            html += '</div>';
+        });
+        html += '</div>';
+
+        html += '<button onclick="window.app.markSetupComplete()" class="w-full mt-3 text-sm font-semibold underline text-center py-2" style="color: var(--color-accent);">Mark setup guide as complete</button>';
+        return html;
+    }
+    markSetupComplete() {
+        if (!confirm('Mark the setup guide as complete? It will be hidden from the menu — you can always bring it back from Settings.')) return;
+        this.setupGuideCompleted = true;
+        this.saveData();
+        this.navigateTo('home');
+    }
+    resetSetupGuide() { this.setupGuideCompleted = false; this.saveData(); this.render(); }
     renderSidebar() {
         if (!this.sidebarOpen) return '';
-        const items = [['home','Home','🏠'],['planning','Planning','📋'],['tracking','Tracking','🏦'],['reporting','Reporting','📊']];
+        let items = [['starthere','Start Here','👋'],['home','Home','🏠'],['planning','Planning','📋'],['tracking','Tracking','🏦'],['reporting','Reporting','📊'],['settings','Settings','⚙️']];
+        if (this.setupGuideCompleted) items = items.filter(([key]) => key !== 'starthere');
         let html = '<div class="fixed inset-0 z-40 sidebar-backdrop" onclick="window.app.toggleSidebar()" style="background-color: rgba(0,0,0,0.45); backdrop-filter: blur(2px);"></div>';
         html += '<div class="fixed top-0 left-0 h-full z-50 flex flex-col sidebar-panel" style="width: 78%; max-width: 300px; background-color: var(--color-surface); box-shadow: 4px 0 24px rgba(0,0,0,0.15);">';
         html += '<div class="hero-gradient flex items-center justify-between p-4"><span class="text-lg font-bold text-white">💷 Money Tracker</span><button onclick="window.app.toggleSidebar()" class="w-8 h-8 rounded-full flex items-center justify-center" style="background-color: rgba(255,255,255,0.25); color: white;">×</button></div>';
         html += '<div class="flex-1 p-3">';
         items.forEach(([key,label,icon]) => {
             const active = this.currentTab === key;
-            html += '<button onclick="window.app.navigateTo(\'' + key + '\')" class="w-full flex items-center gap-3 p-3 rounded-xl mb-1 text-left" style="background-color: ' + (active ? 'var(--color-secondary)' : 'transparent') + '; border-left: 3px solid ' + (active ? 'var(--color-primary)' : 'transparent') + ';"><span class="flex items-center justify-center rounded-full" style="width: 34px; height: 34px; font-size: 17px; background-color: ' + (active ? 'var(--color-primary)' : 'var(--color-bg)') + ';">' + icon + '</span><span class="font-semibold" style="color: ' + (active ? 'var(--color-primary)' : 'var(--color-text)') + ';">' + label + '</span></button>';
+            const extraStyle = key === 'settings' ? ' margin-top: 8px; border-top: 1px solid var(--color-border); padding-top: 12px;' : '';
+            html += '<button onclick="window.app.navigateTo(\'' + key + '\')" class="w-full flex items-center gap-3 p-3 rounded-xl mb-1 text-left" style="background-color: ' + (active ? 'var(--color-secondary)' : 'transparent') + '; border-left: 3px solid ' + (active ? 'var(--color-primary)' : 'transparent') + ';' + extraStyle + '"><span class="flex items-center justify-center rounded-full" style="width: 34px; height: 34px; font-size: 17px; background-color: ' + (active ? 'var(--color-primary)' : 'var(--color-bg)') + ';">' + icon + '</span><span class="font-semibold" style="color: ' + (active ? 'var(--color-primary)' : 'var(--color-text)') + ';">' + label + '</span></button>';
         });
         html += '</div>';
-        html += '<div class="p-3" style="border-top: 1px solid var(--color-border);"><button onclick="window.app.openSettingsFromSidebar()" class="w-full flex items-center gap-3 p-3 rounded-xl text-left"><span class="flex items-center justify-center rounded-full" style="width: 34px; height: 34px; font-size: 17px; background-color: var(--color-bg);">⚙️</span><span class="font-semibold" style="color: var(--color-text);">Settings</span></button></div>';
         html += '</div>';
         return html;
     }
     render() {
         let content = '';
-        if (this.currentTab === 'home') content = this.renderHomeTab();
+        if (this.currentTab === 'starthere') content = this.renderStartHereTab();
+        else if (this.currentTab === 'home') content = this.renderHomeTab();
         else if (this.currentTab === 'planning') content = this.renderPlanningTab();
         else if (this.currentTab === 'tracking') content = this.renderTrackingTab();
         else if (this.currentTab === 'reporting') content = this.renderReportingTab();
+        else if (this.currentTab === 'settings') content = this.renderSettings();
 
-        const tabLabels = { home: 'Home', planning: 'Planning', tracking: 'Tracking', reporting: 'Reporting' };
+        const tabLabels = { starthere: 'Start Here', home: 'Home', planning: 'Planning', tracking: 'Tracking', reporting: 'Reporting', settings: 'Settings' };
 
         let html = '<div style="background-color: var(--color-bg); min-height: 100vh;">';
         html += '<div class="sticky top-0 z-30" style="background-color: var(--color-surface); border-bottom: 1px solid var(--color-border);"><div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">';
         html += '<div class="flex items-center gap-3"><button onclick="window.app.toggleSidebar()" class="w-10 h-10 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">☰</button><h1 class="text-lg font-bold" style="color: var(--color-text);">' + tabLabels[this.currentTab] + '</h1></div>';
         html += '<span class="text-xl">💷</span>';
-        html += '</div>' + (this.showSettings ? this.renderSettings() : '') + '</div>';        html += '<div class="max-w-4xl mx-auto px-4 py-6 pb-20">' + content + '</div>';
+        html += '</div></div>';
+        html += '<div class="max-w-4xl mx-auto px-4 py-6 pb-20">' + content + '</div>';
         html += this.renderSidebar();
         html += '</div>';
 
