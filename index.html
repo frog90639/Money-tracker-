@@ -69,6 +69,7 @@ class MoneyTracker {
         this.paydayDay = data?.paydayDay || 25;
         this.linkTasksToPlanning = data?.linkTasksToPlanning || false;
         this.setupGuideCompleted = data?.setupGuideCompleted || false;
+        this.hasViewedTips = data?.hasViewedTips || false;
         this.toast = null;
         this.groupTargets = data?.groupTargets || { essential: 50, saving: 30, spending: 20 };
         this.currentTab = 'home';
@@ -80,9 +81,11 @@ class MoneyTracker {
         this.editingAccount = null;
         this.accountFormCategoryUI = '';
         this.accountFormLISAUI = false;
+        this.accountFormClosedUI = false;
         this.accountFormNameUI = undefined;
         this.accountFormStartUI = undefined;
         this.accountFormOpeningMonthUI = undefined;
+        this.accountFormClosedMonthUI = undefined;
         this.addingAccountCategory = false;
         this.editingAccountCategory = null;
         this.addingCategory = false;
@@ -102,6 +105,8 @@ class MoneyTracker {
         this.reportingTaxYear = this.taxYearStartForMonthKey(this.monthKey());
         this.reviewMonth = this.currentMonthKey();
         this.monthlyComments = data?.monthlyComments || {};
+        this.commentsEnabled = data?.commentsEnabled !== undefined ? data.commentsEnabled : true;
+        this.editingComment = false;
         this.migrateLegacyIncomeCategories();
         this.migrateDefaultGroupTargets(data);
         this.render();
@@ -153,7 +158,7 @@ class MoneyTracker {
     }
     categoryGroup(c) { return c.group || 'spending'; }
     dataPayload() {
-        return { accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning, currentMonthMode: this.currentMonthMode, paydayDay: this.paydayDay, setupGuideCompleted: this.setupGuideCompleted };
+        return { accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning, currentMonthMode: this.currentMonthMode, paydayDay: this.paydayDay, setupGuideCompleted: this.setupGuideCompleted, commentsEnabled: this.commentsEnabled, hasViewedTips: this.hasViewedTips };
     }
     saveData() {
         if (!this.user) return;
@@ -220,8 +225,8 @@ class MoneyTracker {
     isaTypeLabel(isaType) { return isaType === 'stocks_and_shares' ? 'Stocks and Shares' : 'Cash'; }
     toggleAddAccount() {
         this.addingAccount = !this.addingAccount; this.editingAccount = null;
-        this.accountFormCategoryUI = ''; this.accountFormLISAUI = false;
-        this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined;
+        this.accountFormCategoryUI = ''; this.accountFormLISAUI = false; this.accountFormClosedUI = false;
+        this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined;
         this.render();
     }
     toggleEditAccount(id) {
@@ -230,7 +235,8 @@ class MoneyTracker {
             const a = this.accounts.find(x => x.id === id);
             this.accountFormCategoryUI = a ? a.categoryId : '';
             this.accountFormLISAUI = a ? !!a.isLISA : false;
-            this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined;
+            this.accountFormClosedUI = a ? !!a.closed : false;
+            this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined;
         }
         this.render();
     }
@@ -238,29 +244,34 @@ class MoneyTracker {
         const nameEl = document.getElementById('ac_name');
         const startEl = document.getElementById('ac_start');
         const monthEl = document.getElementById('ac_openingmonth');
+        const closedMonthEl = document.getElementById('ac_closedmonth');
         if (nameEl) this.accountFormNameUI = nameEl.value;
         if (startEl) this.accountFormStartUI = startEl.value;
         if (monthEl) this.accountFormOpeningMonthUI = monthEl.value;
+        if (closedMonthEl) this.accountFormClosedMonthUI = closedMonthEl.value;
     }
     setAccountFormCategory(categoryId) { this.captureAccountFormState(); this.accountFormCategoryUI = categoryId; this.render(); }
     setAccountFormLISA(checked) { this.captureAccountFormState(); this.accountFormLISAUI = checked; this.render(); }
+    setAccountFormClosed(checked) { this.captureAccountFormState(); this.accountFormClosedUI = checked; this.render(); }
     accountWillTrackInput(categoryId, lisaChecked) {
         const cat = this.accountCategories.find(c => c.id === categoryId);
         if (cat && cat.trackInput) return true;
         return this.isPensionCategoryId(categoryId) && !!lisaChecked;
     }
-    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth, isLISA, manualGrowth) {
+    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth, isLISA, manualGrowth, closed, closedMonth) {
         if (!name) return;
         const isISA = this.isISACategoryId(categoryId);
         const isPension = this.isPensionCategoryId(categoryId);
         const validMonth = /^\d{4}-\d{2}$/.test(openingMonth || '') ? openingMonth : this.currentMonthKey();
         const willTrackInput = this.accountWillTrackInput(categoryId, isLISA);
+        const isClosed = !!closed;
+        const validClosedMonth = isClosed && /^\d{4}-\d{2}$/.test(closedMonth || '') ? closedMonth : (isClosed ? this.currentMonthKey() : undefined);
         if (id) {
             const a = this.accounts.find(x => x.id === id);
-            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; a.isLISA = isPension ? !!isLISA : undefined; a.manualGrowth = willTrackInput ? !!manualGrowth : undefined; }
+            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; a.isLISA = isPension ? !!isLISA : undefined; a.manualGrowth = willTrackInput ? !!manualGrowth : undefined; a.closed = isClosed; a.closedMonth = validClosedMonth; }
             this.editingAccount = null;
         } else {
-            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: willTrackInput ? !!manualGrowth : undefined });
+            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: willTrackInput ? !!manualGrowth : undefined, closed: isClosed, closedMonth: validClosedMonth });
             this.addingAccount = false;
             const groupKey = categoryId || '__uncategorised';
             this.expandedTrackingCategories[groupKey] = true;
@@ -468,7 +479,7 @@ class MoneyTracker {
     }
 
     // ---------- TRACKING (monthly account balances) ----------
-    shiftTrackingMonth(delta) { this.trackingMonth = this.shiftMonthKey(this.trackingMonth, delta); this.render(); }
+    shiftTrackingMonth(delta) { this.trackingMonth = this.shiftMonthKey(this.trackingMonth, delta); this.editingComment = false; this.render(); }
     toggleEditTrackingBalance(accId) { this.editingTrackingBalance = this.editingTrackingBalance === accId ? null : accId; this.render(); }
     accountTracksInput(accId) {
         const acc = this.accounts.find(a => a.id === accId);
@@ -884,6 +895,9 @@ class MoneyTracker {
         if (a.openingMonth && mk < a.openingMonth) {
             return '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);"><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span><p class="text-xs mt-1" style="color: var(--color-text-muted);">Starts ' + this.monthLabel(a.openingMonth) + '</p></div>';
         }
+        if (a.closed && a.closedMonth && mk > a.closedMonth) {
+            return '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);"><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(Closed)</span><p class="text-xs mt-1" style="color: var(--color-text-muted);">Closed ' + this.monthLabel(a.closedMonth) + ' · ' + this.fmt(this.balanceAsOf(a.id, mk)) + '</p></div>';
+        }
         const entry = this.entryAt(a.id, mk);
         const prev = this.latestEntryBefore(a.id, mk);
         const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
@@ -892,7 +906,7 @@ class MoneyTracker {
         const manualGrowth = tracksInput && !!a.manualGrowth;
         const isEditing = this.editingTrackingBalance === a.id || !entry;
         let html = '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);">';
-        html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span>' + (a.isaType ? ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.isaTypeLabel(a.isaType) + ')</span>' : '') + (a.isLISA ? ' <span class="text-xs" style="color: var(--color-text-muted);">(LISA)</span>' : '') + '</div></div>';
+        html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span>' + (a.isaType ? ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.isaTypeLabel(a.isaType) + ')</span>' : '') + (a.isLISA ? ' <span class="text-xs" style="color: var(--color-text-muted);">(LISA)</span>' : '') + (a.closed ? ' <span class="text-xs" style="color: var(--color-text-muted);">(Closed)</span>' : '') + '</div></div>';
         if (isEditing) {
             html += '<div class="flex items-center gap-2 mb-2"><span class="text-xs" style="color: var(--color-text-muted); width: 90px;">Balance £</span><input id="tb_' + a.id + '" type="number" step="0.01" value="' + (entry ? entry.balance : '') + '" placeholder="' + this.fmt(baseline) + '" class="flex-1 px-2 py-1.5 rounded-lg border text-sm" style="border-color: var(--color-border);"></div>';
             if (tracksInput) {
@@ -937,7 +951,26 @@ class MoneyTracker {
     }
     // ---------- MONTHLY REVIEW ----------
     shiftReviewMonth(delta) { this.reviewMonth = this.shiftMonthKey(this.reviewMonth, delta); this.render(); }
-    saveMonthlyComment(mk, text) { this.monthlyComments[mk] = text; this.saveData(); this.showToast('Comment saved'); }
+    saveMonthlyComment(mk, text) { this.monthlyComments[mk] = text; this.editingComment = false; this.saveData(); this.showToast('Comment saved'); }
+    toggleEditComment() { this.editingComment = !this.editingComment; this.render(); }
+    toggleCommentsEnabled(checked) { this.commentsEnabled = checked; this.saveData(); this.showToast('Saved'); }
+    renderTrackingCommentSection(mk) {
+        if (!this.commentsEnabled) return '';
+        const comment = this.monthlyComments[mk] || '';
+        const isEditing = this.editingComment || !comment;
+        let html = '<div class="rounded-2xl shadow-sm mb-4 overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        html += '<div class="flex items-center gap-2 p-4 pb-2"><span>📝</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">End of month comment - how did it go?</span></div>';
+        html += '<div class="px-4 pb-4">';
+        if (isEditing) {
+            html += '<textarea id="tracking_comment_' + mk + '" placeholder="How did this month go?" class="w-full px-3 py-2 rounded-lg border text-sm" style="border-color: var(--color-border); min-height: 80px;">' + comment + '</textarea>';
+            html += '<button onclick="window.app.saveMonthlyComment(\'' + mk + '\', document.getElementById(\'tracking_comment_' + mk + '\').value)" class="w-full mt-2 py-2 rounded-lg text-white text-sm font-semibold" style="background-color: var(--color-primary);">Save</button>';
+        } else {
+            html += '<p class="text-sm mb-2" style="color: var(--color-text);">' + comment + '</p>';
+            html += '<button onclick="window.app.toggleEditComment()" class="text-xs font-semibold underline" style="color: var(--color-accent);">Edit</button>';
+        }
+        html += '</div></div>';
+        return html;
+    }
     monthTotalAndDiff(accounts, mk) {
         const prevMk = this.shiftMonthKey(mk, -1);
         const total = accounts.reduce((s,a) => s + this.balanceAsOf(a.id, mk), 0);
@@ -1024,19 +1057,16 @@ class MoneyTracker {
         });
         html += '</div>';
 
-        const comment = this.monthlyComments[mk] || '';
-        html += '<div class="p-4 rounded-2xl shadow-sm mb-4" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 mb-2"><span>📝</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Comment</span></div>';
-        html += '<textarea id="review_comment_' + mk + '" placeholder="How did this month go?" class="w-full px-3 py-2 rounded-lg border text-sm" style="border-color: var(--color-border); min-height: 80px;">' + comment + '</textarea>';
-        html += '<button onclick="window.app.saveMonthlyComment(\'' + mk + '\', document.getElementById(\'review_comment_' + mk + '\').value)" class="w-full mt-2 py-2 rounded-lg text-white text-sm font-semibold" style="background-color: var(--color-primary);">Save Comment</button>';
-        html += '</div>';
         return html;
     }
     renderTrackingTab() {
         const mk = this.trackingMonth;
-        let html = '<div class="flex items-center justify-between mb-4">';
-        html += '<button onclick="window.app.shiftTrackingMonth(-1)" class="w-9 h-9 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">‹</button>';
-        html += '<p class="font-bold" style="color: var(--color-text);">' + this.monthLabel(mk) + '</p>';
-        html += '<button onclick="window.app.shiftTrackingMonth(1)" class="w-9 h-9 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">›</button>';
+        let html = '<div class="flex items-center justify-between mb-4 gap-1">';
+        html += '<button onclick="window.app.shiftTrackingMonth(-12)" class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style="background-color: var(--color-secondary); color: var(--color-text); font-size: 12px;">«</button>';
+        html += '<button onclick="window.app.shiftTrackingMonth(-1)" class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style="background-color: var(--color-secondary); color: var(--color-text);">‹</button>';
+        html += '<p class="font-bold flex-1 text-center" style="color: var(--color-text);">' + this.monthLabel(mk) + '</p>';
+        html += '<button onclick="window.app.shiftTrackingMonth(1)" class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style="background-color: var(--color-secondary); color: var(--color-text);">›</button>';
+        html += '<button onclick="window.app.shiftTrackingMonth(12)" class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style="background-color: var(--color-secondary); color: var(--color-text); font-size: 12px;">»</button>';
         html += '</div>';
 
         if (this.accounts.length === 0) {
@@ -1071,6 +1101,8 @@ class MoneyTracker {
                 html += '</div>';
             });
         }
+
+        html += this.renderTrackingCommentSection(mk);
 
         html += '<div class="rounded-2xl shadow-sm mt-4 p-3" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
         if (this.addingAccount) html += this.renderAccountForm(null);
@@ -1226,6 +1258,10 @@ class MoneyTracker {
     // ---------- RENDER: SETTINGS ----------
     renderSettings() {
         let html = '';
+        html += '<div class="p-4 rounded-2xl shadow-sm mb-3 flex items-center justify-between" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        html += '<div class="flex items-center gap-2"><span class="flex items-center justify-center rounded-full flex-shrink-0" style="width: 32px; height: 32px; background-color: var(--color-bg); overflow: hidden;">' + (this.user && this.user.photoURL ? '<img src="' + this.user.photoURL + '" style="width:100%; height:100%; object-fit: cover;">' : '👤') + '</span><span class="text-xs" style="color: var(--color-text-muted);">' + (this.user ? (this.user.email || 'Signed in') : '') + '</span></div>';
+        html += '<button onclick="window.app.signOutUser()" class="text-xs font-semibold px-3 py-2 rounded-lg" style="background-color: var(--color-secondary); color: var(--color-text);">🚪 Sign Out</button>';
+        html += '</div>';
 
         const groups = [
             ['planning', 'Planning', [['categories','Planning Categories'],['income','Income'],['tasks','Monthly Tasks']]],
@@ -1260,10 +1296,11 @@ class MoneyTracker {
     renderSettingsSectionContent(section) {
         let html = '';
         if (section === 'accounts') {
+            html += '<label class="flex items-center gap-2 mb-3 p-2 rounded" style="background-color: var(--color-bg); color: var(--color-text);"><input type="checkbox" ' + (this.commentsEnabled ? 'checked' : '') + ' onchange="window.app.toggleCommentsEnabled(this.checked)"> Show end of month comments on Tracking?</label>';
             if (this.addingAccount) html += this.renderAccountForm(null);
             this.accounts.forEach(a => {
                 if (this.editingAccount === a.id) { html += this.renderAccountForm(a); return; }
-                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + (a.isaType ? ' · ' + this.isaTypeLabel(a.isaType) : '') + (a.isLISA ? ' · LISA' : '') + ', opens ' + this.fmt(a.startingBalance) + (a.openingMonth ? ' as of ' + this.monthLabel(a.openingMonth) : '') + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
+                html += '<div class="flex items-center justify-between p-2 mb-2 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><div><span style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(' + this.accountCategoryName(a.categoryId) + (a.isaType ? ' · ' + this.isaTypeLabel(a.isaType) : '') + (a.isLISA ? ' · LISA' : '') + (a.closed ? ' · Closed ' + this.monthLabel(a.closedMonth) : '') + ', opens ' + this.fmt(a.startingBalance) + (a.openingMonth ? ' as of ' + this.monthLabel(a.openingMonth) : '') + ')</span></div><div class="flex gap-1"><button onclick="window.app.toggleEditAccount(\'' + a.id + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-secondary);">Edit</button><button onclick="window.app.deleteAccount(\'' + a.id + '\')" style="background-color: var(--color-error); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Delete</button></div></div>';
             });
             if (!this.addingAccount) html += '<button onclick="window.app.toggleAddAccount()" class="w-full py-2 rounded-lg mt-2" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add Account</button>';
         } else if (section === 'accountCategories') {
@@ -1330,7 +1367,15 @@ class MoneyTracker {
         html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Opening balance as of</p>';
         html += '<input id="ac_openingmonth" type="month" value="' + (this.accountFormOpeningMonthUI !== undefined ? this.accountFormOpeningMonthUI : (a && a.openingMonth ? a.openingMonth : this.currentMonthKey())) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">The tracker will not ask for balances before this month.</p>';
-        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="ac_closed" type="checkbox" ' + (this.accountFormClosedUI ? 'checked' : '') + ' onchange="window.app.setAccountFormClosed(this.checked)"> Account closed?</label>';
+        let closedMonthArg = 'null';
+        if (this.accountFormClosedUI) {
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Closed as of</p>';
+            html += '<input id="ac_closedmonth" type="month" value="' + (this.accountFormClosedMonthUI !== undefined ? this.accountFormClosedMonthUI : (a && a.closedMonth ? a.closedMonth : this.currentMonthKey())) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">The tracker will not ask for balances after this month.</p>';
+            closedMonthArg = "document.getElementById('ac_closedmonth').value";
+        }
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ', document.getElementById(\'ac_closed\').checked, ' + closedMonthArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
@@ -1422,6 +1467,7 @@ class MoneyTracker {
         this.navHistory.push(this.currentTab);
         this.currentTab = tab;
         this.sidebarOpen = false;
+        if (tab === 'tips' && !this.hasViewedTips) { this.hasViewedTips = true; this.saveData(); }
         this.render();
     }
     navigateToSettings(groupKey, sectionKey) {
@@ -1438,6 +1484,35 @@ class MoneyTracker {
         this.sidebarOpen = false;
         this.render();
     }
+    renderTipsTab() {
+        const tips = [
+            { icon: '🎯', title: 'Percentage-based Planning categories', desc: 'Under a Saving category, tick "Percentage-based?" to set it as a % of income instead of a fixed amount — perfect for an ISA contribution that should scale with what you earn.' },
+            { icon: '➕', title: 'Split a category into sub-items', desc: 'Tick "Split further?" on any Planning category to break it into named sub-items (e.g. Tesco, Butcher) that add up to the category total automatically.' },
+            { icon: '🏛️', title: 'LISA under Pension', desc: 'If an account sits under a Pension type, tick "LISA?" on it — its contributions will count toward your ISA allowance on Reporting, while the account stays filed as a Pension.' },
+            { icon: '✍️', title: 'Manual interest entry', desc: 'For accounts that track input, tick "Enter interest/growth manually?" to type the exact interest each month instead of relying on the auto-calculated figure.' },
+            { icon: '🏦', title: 'ISA Allowance tracker', desc: 'Reporting shows how much of your £20,000 annual ISA allowance you have used, based on your ISA and LISA contributions for the selected tax year.' },
+            { icon: '💷', title: 'Payday-based months', desc: 'In Settings → Income, switch "Current Month" from Calendar to Payday and set your pay date — e.g. the 23rd to the 22nd counts as one month, instead of the calendar month.' },
+            { icon: '📄', title: 'PDF Report', desc: 'Settings → Reporting → PDF Report lets you generate a printable report filtered by year, month, and account — handy for record-keeping or sharing.' },
+            { icon: '🔗', title: 'Link tasks to Planning', desc: 'Turn on "Link tasks to planning amounts" in Settings → Monthly Tasks, then attach Planning categories to a task like "Transfer to savings" — its total updates automatically.' },
+            { icon: '👉', title: 'Swipe to go back', desc: 'Swipe right anywhere on the screen to go back to whatever page you were on before — no need to hunt for a back button.' },
+            { icon: '🔒', title: 'Closed accounts', desc: 'Mark an account as closed with a date in its settings, and Tracking will stop asking for new balances on it after that month.' },
+            { icon: '📅', title: 'Tax year navigation', desc: 'Reporting runs on the UK tax year (6 April – 5 April), not the calendar year — use the ‹ › arrows there to move between tax years.' },
+            { icon: '✏️', title: 'Edit targets inline', desc: '"Edit Essentials/Saving/Spending targets" at the bottom of the Planning tab lets you tweak your target percentages without leaving the page.' }
+        ];
+        let html = '<div class="p-5 rounded-3xl shadow-sm mb-4 hero-gradient">';
+        html += '<p class="text-2xl font-extrabold text-white mb-1">💡 Tips</p>';
+        html += '<p class="text-sm" style="color: rgba(255,255,255,0.9);">A few features that are easy to miss.</p>';
+        html += '</div>';
+        html += '<div class="rounded-2xl shadow-sm overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
+        tips.forEach((t,idx) => {
+            html += '<div class="flex items-start gap-3 p-4' + (idx < tips.length-1?' border-b':'') + '" style="border-color: var(--color-border);">';
+            html += '<span class="flex items-center justify-center rounded-full flex-shrink-0" style="width: 34px; height: 34px; background-color: var(--color-tasks-bg); font-size: 16px;">' + t.icon + '</span>';
+            html += '<div class="flex-1"><p class="font-medium mb-1" style="color: var(--color-text);">' + t.title + '</p><p class="text-xs" style="color: var(--color-text-muted);">' + t.desc + '</p></div>';
+            html += '</div>';
+        });
+        html += '</div>';
+        return html;
+    }
     renderStartHereTab() {
         const tasks = [
             { title: 'Set your salary', desc: 'So Planning can work out your section percentages.', done: (parseFloat(this.income.salary) || 0) > 0, action: "window.app.navigateToSettings('planning','income')" },
@@ -1445,7 +1520,8 @@ class MoneyTracker {
             { title: 'Add your accounts', desc: 'Bank, savings, ISAs — whatever you want to track.', done: this.accounts.length > 0, action: "window.app.navigateTo('tracking')" },
             { title: 'Set a planning target', desc: 'Give at least one category an amount on the Planning tab.', done: this.budgets.length > 0, action: "window.app.navigateTo('planning')" },
             { title: 'Add a monthly task', desc: 'Reminders like Enter salary or Transfer to savings.', done: this.tasks.length > 0, action: "window.app.navigateToSettings('planning','tasks')" },
-            { title: 'Enter this months balances', desc: 'Log where your accounts stand right now.', done: this.monthlyBalances.some(e => e.monthKey === this.currentMonthKey()), action: "window.app.navigateTo('tracking')" }
+            { title: 'Enter this months balances', desc: 'Log where your accounts stand right now.', done: this.monthlyBalances.some(e => e.monthKey === this.currentMonthKey()), action: "window.app.navigateTo('tracking')" },
+            { title: 'Read the tips', desc: 'A few features that are easy to miss otherwise.', done: this.hasViewedTips, action: "window.app.navigateTo('tips')" }
         ];
         const doneCount = tasks.filter(t => t.done).length;
 
@@ -1465,6 +1541,8 @@ class MoneyTracker {
         });
         html += '</div>';
 
+        html += '<div class="p-3 rounded-xl mb-2" style="background-color: var(--color-tasks-bg);"><p class="text-xs" style="color: var(--color-text);">💡 Tip: every month, Tracking asks you an end of month comment — how did it go? If that is not for you, turn it off anytime in <strong>Settings → Tracking → Accounts</strong>.</p></div>';
+
         html += '<button onclick="window.app.markSetupComplete()" class="w-full mt-3 text-sm font-semibold underline text-center py-2" style="color: var(--color-accent);">Mark setup guide as complete</button>';
         return html;
     }
@@ -1477,7 +1555,7 @@ class MoneyTracker {
     resetSetupGuide() { this.setupGuideCompleted = false; this.saveData(); this.render(); }
     renderSidebar() {
         if (!this.sidebarOpen) return '';
-        let items = [['starthere','Start Here','👋'],['home','Home','🏠'],['planning','Planning','📋'],['tracking','Tracking','🏦'],['reporting','Reporting','📊'],['settings','Settings','⚙️']];
+        let items = [['starthere','Start Here','👋'],['home','Home','🏠'],['tips','Tips','💡'],['planning','Planning','📋'],['tracking','Tracking','🏦'],['reporting','Reporting','📊'],['settings','Settings','⚙️']];
         if (this.setupGuideCompleted) items = items.filter(([key]) => key !== 'starthere');
         let html = '<div class="fixed inset-0 z-40 sidebar-backdrop" onclick="window.app.toggleSidebar()" style="background-color: rgba(0,0,0,0.45); backdrop-filter: blur(2px);"></div>';
         html += '<div class="fixed top-0 left-0 h-full z-50 flex flex-col sidebar-panel" style="width: 78%; max-width: 300px; background-color: var(--color-surface); box-shadow: 4px 0 24px rgba(0,0,0,0.15);">';
@@ -1501,12 +1579,13 @@ class MoneyTracker {
         let content = '';
         if (this.currentTab === 'starthere') content = this.renderStartHereTab();
         else if (this.currentTab === 'home') content = this.renderHomeTab();
+        else if (this.currentTab === 'tips') content = this.renderTipsTab();
         else if (this.currentTab === 'planning') content = this.renderPlanningTab();
         else if (this.currentTab === 'tracking') content = this.renderTrackingTab();
         else if (this.currentTab === 'reporting') content = this.renderReportingTab();
         else if (this.currentTab === 'settings') content = this.renderSettings();
 
-        const tabLabels = { starthere: 'Start Here', home: 'Home', planning: 'Planning', tracking: 'Tracking', reporting: 'Reporting', settings: 'Settings' };
+        const tabLabels = { starthere: 'Start Here', home: 'Home', tips: 'Tips', planning: 'Planning', tracking: 'Tracking', reporting: 'Reporting', settings: 'Settings' };
 
         let html = '<div style="background-color: var(--color-bg); min-height: 100vh;">';
         html += '<div class="sticky top-0 z-30" style="background-color: var(--color-surface); border-bottom: 1px solid var(--color-border);"><div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">';
