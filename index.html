@@ -157,7 +157,10 @@ class MoneyTracker {
     }
     saveData() {
         if (!this.user) return;
-        db.collection('users').doc(this.user.uid).set(this.dataPayload())
+        // Firestore rejects `undefined` field values (unlike localStorage/JSON.stringify,
+        // which silently drops them) — round-trip through JSON to strip them safely.
+        const payload = JSON.parse(JSON.stringify(this.dataPayload()));
+        db.collection('users').doc(this.user.uid).set(payload)
             .catch(err => { console.error('Save failed', err); this.showToast('Save failed — check connection'); });
     }
     showToast(message) {
@@ -1562,6 +1565,14 @@ function signInWithGoogle() {
     });
 }
 
+function renderLoadErrorScreen(message) {
+    document.getElementById('app').innerHTML =
+        '<div class="flex flex-col items-center justify-center" style="min-height: 100vh; background-color: var(--color-bg); padding: 24px; text-align: center;">' +
+        '<p style="color: var(--color-error); margin-bottom: 12px;">Could not load your data.<br><span style="font-size: 12px; color: var(--color-text-muted);">' + message + '</span></p>' +
+        '<button onclick="window.location.reload()" class="text-sm font-semibold px-4 py-2 rounded-lg text-white" style="background-color: var(--color-primary);">Retry</button>' +
+        '<button onclick="auth.signOut()" class="text-sm font-semibold underline mt-3" style="color: var(--color-accent);">Sign out</button>' +
+        '</div>';
+}
 auth.onAuthStateChanged(async (user) => {
     if (!user) {
         window.app = null;
@@ -1569,13 +1580,14 @@ auth.onAuthStateChanged(async (user) => {
         return;
     }
     renderLoadingScreen();
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out after 10s — this usually means Firestore is not set up yet, or the security rules are blocking the read.')), 10000));
     try {
-        const doc = await db.collection('users').doc(user.uid).get();
+        const doc = await Promise.race([db.collection('users').doc(user.uid).get(), timeout]);
         const data = doc.exists ? doc.data() : null;
         window.app = new MoneyTracker(data, user);
     } catch (err) {
-        document.getElementById('app').innerHTML =
-            '<div class="flex items-center justify-center" style="min-height: 100vh; background-color: var(--color-bg); padding: 24px; text-align: center;"><p style="color: var(--color-error);">Could not load your data. Check your connection and refresh.<br><span style="font-size: 12px; color: var(--color-text-muted);">' + err.message + '</span></p></div>';
+        console.error('Load failed:', err);
+        renderLoadErrorScreen(err.message);
     }
 });
 
