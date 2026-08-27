@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Money Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
         :root {
@@ -53,8 +56,8 @@
     <div id="app">Loading...</div>
     <script>
 class MoneyTracker {
-    constructor() {
-        const data = this.loadData();
+    constructor(data, user) {
+        this.user = user;
         this.accounts = data?.accounts || [];
         this.accountCategories = data?.accountCategories || this.defaultAccountCategories();
         this.categories = data?.categories || this.defaultCategories();
@@ -149,8 +152,14 @@ class MoneyTracker {
         ];
     }
     categoryGroup(c) { return c.group || 'spending'; }
-    loadData() { try { return JSON.parse(localStorage.getItem('moneyTrackerData')); } catch(e) { return null; } }
-    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning, currentMonthMode: this.currentMonthMode, paydayDay: this.paydayDay, setupGuideCompleted: this.setupGuideCompleted})); } catch(e) {} }
+    dataPayload() {
+        return { accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning, currentMonthMode: this.currentMonthMode, paydayDay: this.paydayDay, setupGuideCompleted: this.setupGuideCompleted };
+    }
+    saveData() {
+        if (!this.user) return;
+        db.collection('users').doc(this.user.uid).set(this.dataPayload())
+            .catch(err => { console.error('Save failed', err); this.showToast('Save failed — check connection'); });
+    }
     showToast(message) {
         this.toast = message;
         this.render();
@@ -1474,9 +1483,14 @@ class MoneyTracker {
             html += '<button onclick="window.app.navigateTo(\'' + key + '\')" class="w-full flex items-center gap-3 p-3 rounded-xl mb-1 text-left" style="background-color: ' + (active ? 'var(--color-secondary)' : 'transparent') + '; border-left: 3px solid ' + (active ? 'var(--color-primary)' : 'transparent') + ';' + extraStyle + '"><span class="flex items-center justify-center rounded-full" style="width: 34px; height: 34px; font-size: 17px; background-color: ' + (active ? 'var(--color-primary)' : 'var(--color-bg)') + ';">' + icon + '</span><span class="font-semibold" style="color: ' + (active ? 'var(--color-primary)' : 'var(--color-text)') + ';">' + label + '</span></button>';
         });
         html += '</div>';
+        html += '<div class="p-3" style="border-top: 1px solid var(--color-border);">';
+        html += '<div class="flex items-center gap-2 mb-2 px-1"><span class="flex items-center justify-center rounded-full flex-shrink-0" style="width: 28px; height: 28px; background-color: var(--color-bg); overflow: hidden;">' + (this.user && this.user.photoURL ? '<img src="' + this.user.photoURL + '" style="width:100%; height:100%; object-fit: cover;">' : '👤') + '</span><span class="text-xs truncate" style="color: var(--color-text-muted);">' + (this.user ? (this.user.email || 'Signed in') : '') + '</span></div>';
+        html += '<button onclick="window.app.signOutUser()" class="w-full flex items-center gap-3 p-3 rounded-xl text-left"><span class="flex items-center justify-center rounded-full" style="width: 34px; height: 34px; font-size: 17px; background-color: var(--color-bg);">🚪</span><span class="font-semibold" style="color: var(--color-text);">Sign Out</span></button>';
+        html += '</div>';
         html += '</div>';
         return html;
     }
+    signOutUser() { auth.signOut(); }
     render() {
         let content = '';
         if (this.currentTab === 'starthere') content = this.renderStartHereTab();
@@ -1504,7 +1518,63 @@ class MoneyTracker {
     }
 }
 
-window.app = new MoneyTracker();
+// ============================================================
+// FIREBASE CONFIG — replace with your own project's config.
+// Get this from: Firebase Console → Project Settings → General
+// → Your apps → Web app → SDK setup and configuration.
+// ============================================================
+const firebaseConfig = {
+    apiKey: "AIzaSyDhWZcc51ydtap0kA2Y01iGm9fJjsv2PL0",
+    authDomain: "money-tracker-89901.firebaseapp.com",
+    projectId: "money-tracker-89901",
+    storageBucket: "money-tracker-89901.firebasestorage.app",
+    messagingSenderId: "966343417291",
+    appId: "1:966343417291:web:bf6c81f5c141386d4aaa4e"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+function renderLoginScreen() {
+    document.getElementById('app').innerHTML =
+        '<div class="flex flex-col items-center justify-center hero-gradient" style="min-height: 100vh; padding: 24px;">' +
+        '<p class="text-5xl mb-4">💷</p>' +
+        '<p class="text-3xl font-extrabold text-white mb-2">Money Tracker</p>' +
+        '<p class="text-sm mb-8" style="color: rgba(255,255,255,0.9); text-align: center; max-width: 320px;">Sign in to keep your planning, tracking, and reporting synced across every device.</p>' +
+        '<button onclick="signInWithGoogle()" class="flex items-center gap-3 px-6 py-3 rounded-2xl shadow-sm font-semibold" style="background-color: white; color: #2D3436;">' +
+        '<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.084 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>' +
+        'Sign in with Google</button>' +
+        '<p id="login-error" class="text-xs mt-4" style="color: white;"></p>' +
+        '</div>';
+}
+function renderLoadingScreen() {
+    document.getElementById('app').innerHTML =
+        '<div class="flex items-center justify-center" style="min-height: 100vh; background-color: var(--color-bg);"><p class="text-sm" style="color: var(--color-text-muted);">Loading your data…</p></div>';
+}
+function signInWithGoogle() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(err => {
+        const el = document.getElementById('login-error');
+        if (el) el.textContent = 'Sign-in failed: ' + err.message;
+    });
+}
+
+auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+        window.app = null;
+        renderLoginScreen();
+        return;
+    }
+    renderLoadingScreen();
+    try {
+        const doc = await db.collection('users').doc(user.uid).get();
+        const data = doc.exists ? doc.data() : null;
+        window.app = new MoneyTracker(data, user);
+    } catch (err) {
+        document.getElementById('app').innerHTML =
+            '<div class="flex items-center justify-center" style="min-height: 100vh; background-color: var(--color-bg); padding: 24px; text-align: center;"><p style="color: var(--color-error);">Could not load your data. Check your connection and refresh.<br><span style="font-size: 12px; color: var(--color-text-muted);">' + err.message + '</span></p></div>';
+    }
+});
 
 // Swipe right anywhere on screen to go back to the previous page.
 (function() {
@@ -1518,7 +1588,7 @@ window.app = new MoneyTracker();
         const touchEndY = e.changedTouches[0].clientY;
         const deltaX = touchEndX - touchStartX;
         const deltaY = touchEndY - touchStartY;
-        if (deltaX > 80 && Math.abs(deltaY) < 60) {
+        if (deltaX > 80 && Math.abs(deltaY) < 60 && window.app) {
             window.app.goBack();
         }
     }, { passive: true });
