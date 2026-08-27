@@ -34,6 +34,17 @@
         * { font-family: 'Poppins', sans-serif; }
         body { background-color: var(--color-bg); }
         input, select, textarea { font-family: 'Poppins', sans-serif; }
+        button { transition: transform 0.12s ease, box-shadow 0.15s ease, background-color 0.15s ease, opacity 0.15s ease; }
+        button:active { transform: scale(0.96); }
+        .shadow-sm { transition: box-shadow 0.2s ease, transform 0.2s ease; }
+        .shadow-sm:hover { box-shadow: 0 6px 16px rgba(0,0,0,0.08); }
+        @keyframes slideInLeft { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes fadeSlideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+        .sidebar-panel { animation: slideInLeft 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+        .sidebar-backdrop { animation: fadeIn 0.2s ease-out; }
+        .expand-content { animation: fadeSlideDown 0.2s ease-out; }
+        .hero-gradient { background: linear-gradient(135deg, #00B894 0%, #00D8A8 100%); }
     </style>
 </head>
 <body>
@@ -49,10 +60,13 @@ class MoneyTracker {
         this.budgets = data?.budgets || [];
         this.tasks = data?.tasks || [];
         this.income = data?.income || { salary: 0, otherIncomeEnabled: false, otherIncomeAmount: 0 };
+        this.currentMonthMode = data?.currentMonthMode || 'calendar';
+        this.paydayDay = data?.paydayDay || 25;
         this.linkTasksToPlanning = data?.linkTasksToPlanning || false;
         this.groupTargets = data?.groupTargets || { essential: 50, saving: 30, spending: 20 };
-        this.currentTab = 'planning';
+        this.currentTab = 'home';
         this.showSettings = false;
+        this.sidebarOpen = false;
         this.settingsSection = 'accounts';
         this.expandedSettingsGroups = { planning: false, tracking: false, reporting: false };
         this.addingAccount = false;
@@ -74,9 +88,9 @@ class MoneyTracker {
         this.expandedTrackingCategories = {};
         this.editingTrackingBalance = null;
         this.otherIncomeUIEnabled = this.income.otherIncomeEnabled;
-        this.trackingMonth = this.monthKey();
+        this.trackingMonth = this.currentMonthKey();
         this.reportingTaxYear = this.taxYearStartForMonthKey(this.monthKey());
-        this.reviewMonth = this.monthKey();
+        this.reviewMonth = this.currentMonthKey();
         this.monthlyComments = data?.monthlyComments || {};
         this.migrateLegacyIncomeCategories();
         this.migrateDefaultGroupTargets(data);
@@ -128,13 +142,26 @@ class MoneyTracker {
     }
     categoryGroup(c) { return c.group || 'spending'; }
     loadData() { try { return JSON.parse(localStorage.getItem('moneyTrackerData')); } catch(e) { return null; } }
-    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning})); } catch(e) {} }
+    saveData() { try { localStorage.setItem('moneyTrackerData', JSON.stringify({accounts: this.accounts, accountCategories: this.accountCategories, categories: this.categories, monthlyBalances: this.monthlyBalances, budgets: this.budgets, tasks: this.tasks, income: this.income, groupTargets: this.groupTargets, monthlyComments: this.monthlyComments, linkTasksToPlanning: this.linkTasksToPlanning, currentMonthMode: this.currentMonthMode, paydayDay: this.paydayDay})); } catch(e) {} }
     uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
     fmt(n) { const v = isNaN(n) ? 0 : n; return '£' + v.toFixed(2); }
     fmtSigned(n) { const v = isNaN(n) ? 0 : n; return (v >= 0 ? '+' : '−') + '£' + Math.abs(v).toFixed(2); }
     monthKey(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
     monthLabel(key) { const [y,m] = key.split('-'); const d = new Date(parseInt(y), parseInt(m)-1, 1); return d.toLocaleString('en-GB', { month: 'long', year: 'numeric' }); }
     shiftMonthKey(mk, delta) { const [y,m] = mk.split('-').map(Number); const d = new Date(y, (m-1)+delta, 1); return this.monthKey(d); }
+    currentMonthKey() {
+        if (this.currentMonthMode !== 'payday') return this.monthKey();
+        const day = Math.min(31, Math.max(1, parseInt(this.paydayDay) || 1));
+        const now = new Date();
+        let year = now.getFullYear(), month = now.getMonth();
+        if (now.getDate() >= day) { month += 1; if (month > 11) { month = 0; year += 1; } }
+        return this.monthKey(new Date(year, month, 1));
+    }
+    setCurrentMonthMode(mode) { this.currentMonthMode = mode; this.saveData(); this.render(); }
+    savePaydayDay(value) {
+        this.paydayDay = Math.min(31, Math.max(1, parseInt(value) || 1));
+        this.saveData(); this.render();
+    }
     taxYearStartForMonthKey(mk) { const [y,m] = mk.split('-').map(Number); return m >= 4 ? y : y - 1; }
     taxYearMonths(startYear) {
         const months = [];
@@ -182,7 +209,7 @@ class MoneyTracker {
         if (!name) return;
         const isISA = this.isISACategoryId(categoryId);
         const isPension = this.isPensionCategoryId(categoryId);
-        const validMonth = /^\d{4}-\d{2}$/.test(openingMonth || '') ? openingMonth : this.monthKey();
+        const validMonth = /^\d{4}-\d{2}$/.test(openingMonth || '') ? openingMonth : this.currentMonthKey();
         const willTrackInput = this.accountWillTrackInput(categoryId, isLISA);
         if (id) {
             const a = this.accounts.find(x => x.id === id);
@@ -380,7 +407,7 @@ class MoneyTracker {
     toggleTaskPaid(id) {
         const t = this.tasks.find(x => x.id === id);
         if (!t) return;
-        const mk = this.monthKey();
+        const mk = this.currentMonthKey();
         t.paidMonths = t.paidMonths || {};
         if (t.paidMonths[mk]) delete t.paidMonths[mk];
         else t.paidMonths[mk] = true;
@@ -388,8 +415,8 @@ class MoneyTracker {
     }
     resetMonthlyTasks() {
         if (this.tasks.length === 0) return;
-        if (!confirm('Reset all monthly tasks for ' + this.monthLabel(this.monthKey()) + '? This will untick everything for this month.')) return;
-        const mk = this.monthKey();
+        if (!confirm('Reset all monthly tasks for ' + this.monthLabel(this.currentMonthKey()) + '? This will untick everything for this month.')) return;
+        const mk = this.currentMonthKey();
         this.tasks.forEach(t => { if (t.paidMonths) delete t.paidMonths[mk]; });
         this.saveData(); this.render();
     }
@@ -541,7 +568,7 @@ class MoneyTracker {
         let months;
         if (yearSel === 'all') {
             months = this.allMonthKeysSorted().filter(mk => selectedMonthNums.includes(mk.split('-')[1]));
-            if (months.length === 0) months = [this.monthKey()];
+            if (months.length === 0) months = [this.currentMonthKey()];
         } else {
             months = this.taxYearMonths(parseInt(yearSel)).filter(mk => selectedMonthNums.includes(mk.split('-')[1]));
         }
@@ -667,12 +694,12 @@ class MoneyTracker {
         const totalPct = this.totalAllocatedPercent();
         if (totalPct !== null) {
             const overBudget = totalPct > 100;
-            const barColor = overBudget ? 'var(--color-error)' : 'var(--color-primary)';
-            html += '<div class="p-4 rounded-2xl shadow-sm mb-5" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
-            html += '<div class="flex items-center justify-between mb-2"><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Total Allocated</span><span class="text-3xl font-extrabold" style="color: ' + barColor + ';">' + totalPct.toFixed(1) + '%</span></div>';
-            html += '<div class="w-full rounded-full h-3" style="background-color: var(--color-bg);"><div class="h-3 rounded-full" style="width: ' + Math.min(100, totalPct) + '%; background-color: ' + barColor + '; transition: width 0.3s;"></div></div>';
+            const gradientStyle = overBudget ? 'background: linear-gradient(135deg, #FF6B6B 0%, #FF3D57 100%);' : 'background: linear-gradient(135deg, #00B894 0%, #00D8A8 100%);';
+            html += '<div class="p-5 rounded-3xl shadow-sm mb-5" style="' + gradientStyle + '">';
+            html += '<div class="flex items-center justify-between mb-2"><span class="text-xs font-bold uppercase tracking-wide" style="color: rgba(255,255,255,0.85);">Total Allocated</span><span class="text-4xl font-extrabold text-white">' + totalPct.toFixed(1) + '%</span></div>';
+            html += '<div class="w-full rounded-full h-3" style="background-color: rgba(255,255,255,0.3);"><div class="h-3 rounded-full" style="width: ' + Math.min(100, totalPct) + '%; background-color: white; transition: width 0.3s;"></div></div>';
             if (overBudget) {
-                html += '<div class="flex items-center gap-2 mt-3 p-2 rounded-lg" style="background-color: var(--color-spending-bg);"><span>⚠️</span><span class="text-xs font-medium" style="color: var(--color-error);">You have allocated ' + (totalPct - 100).toFixed(1) + '% more than your income covers.</span></div>';
+                html += '<div class="flex items-center gap-2 mt-3 p-2 rounded-lg" style="background-color: rgba(255,255,255,0.2);"><span>⚠️</span><span class="text-xs font-medium text-white">You have allocated ' + (totalPct - 100).toFixed(1) + '% more than your income covers.</span></div>';
             }
             html += '</div>';
         }
@@ -706,7 +733,7 @@ class MoneyTracker {
             html += '<div class="text-right">' + (pct !== null ? '<div class="text-lg font-bold" style="color: ' + statusColor + ';">' + pct.toFixed(1) + '%</div>' + (targetText ? '<div class="text-xs" style="color: var(--color-text-muted);">' + targetText + '</div>' : '') : '<div class="text-lg font-bold" style="color: var(--color-text);">' + this.fmt(groupTotal) + '</div>') + '</div>';
             html += '</button>';
             if (expanded) {
-                html += '<div style="border-top: 1px solid var(--color-border);">';
+                html += '<div class="expand-content" style="border-top: 1px solid var(--color-border);">';
                 cats.forEach((c,idx) => { html += this.renderBudgetRow(c, idx === cats.length - 1); });
                 html += '</div>';
             }
@@ -739,7 +766,7 @@ class MoneyTracker {
 
     // ---------- RENDER: TASKS ----------
     renderTasksSection() {
-        const mk = this.monthKey();
+        const mk = this.currentMonthKey();
         const expanded = !!this.expandedGroups.tasks;
         let html = '<div class="rounded-2xl shadow-sm overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
         html += '<button onclick="window.app.toggleGroupExpand(\'tasks\')" class="w-full flex items-center justify-between p-4">';
@@ -747,7 +774,7 @@ class MoneyTracker {
         html += '<span onclick="event.stopPropagation(); window.app.resetMonthlyTasks()" class="text-xs font-semibold px-3 py-1.5 rounded-lg" style="background-color: var(--color-secondary); color: var(--color-text);">↻ Reset</span>';
         html += '</button>';
         if (expanded) {
-            html += '<div style="border-top: 1px solid var(--color-border);">';
+            html += '<div class="expand-content" style="border-top: 1px solid var(--color-border);">';
             if (this.tasks.length === 0) {
                 html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No monthly tasks yet. Add some in ⚙️ Settings → Monthly Tasks.</p>';
             }
@@ -876,6 +903,42 @@ class MoneyTracker {
         const up = diff >= 0;
         return ' <span style="color: ' + (up ? 'var(--color-success)' : 'var(--color-error)') + ';">' + (up ? '▲' : '▼') + '</span>';
     }
+    // ---------- RENDER: HOME ----------
+    renderHomeTab() {
+        const mk = this.currentMonthKey();
+        let html = '<p class="text-sm mb-4" style="color: var(--color-text-muted);">' + this.monthLabel(mk) + '</p>';
+
+        if (this.accounts.length === 0) {
+            html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No accounts yet. Add some from the Tracking tab.</p>';
+            return html;
+        }
+
+        const overall = this.monthTotalAndDiff(this.accounts, mk);
+        html += '<div class="p-5 rounded-3xl shadow-sm mb-4 hero-gradient">';
+        html += '<div class="flex items-center gap-2 mb-1"><span>💷</span><span class="text-xs font-bold uppercase tracking-wide" style="color: rgba(255,255,255,0.85);">Overall Wealth</span></div>';
+        html += '<p class="text-4xl font-extrabold text-white">' + this.fmt(overall.total) + '</p>';
+        html += '<p class="text-sm mt-1 font-medium" style="color: white;">' + this.fmtSigned(overall.diff) + this.changeArrow(overall.diff) + ' vs ' + this.monthLabel(this.shiftMonthKey(mk,-1)) + '</p>';
+        html += '</div>';
+
+        const groups = [];
+        this.accountCategories.forEach(cat => {
+            const accs = this.accounts.filter(a => a.categoryId === cat.id);
+            if (accs.length) groups.push({ name: cat.name, color: this.accountCategoryColor(cat.id), accounts: accs });
+        });
+        const uncategorised = this.accounts.filter(a => !this.accountCategories.some(c => c.id === a.categoryId));
+        if (uncategorised.length) groups.push({ name: 'Uncategorised', color: this.accountCategoryColor(''), accounts: uncategorised });
+
+        html += '<div class="rounded-2xl shadow-sm overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 p-4 pb-2"><span>📊</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">By Category</span></div>';
+        groups.forEach((g,idx) => {
+            const gd = this.monthTotalAndDiff(g.accounts, mk);
+            html += '<div class="flex items-center justify-between p-4 pt-2' + (idx < groups.length-1?' border-b':'') + '" style="border-color: var(--color-border);">';
+            html += '<div class="flex items-center gap-3"><span class="flex items-center justify-center rounded-full" style="width: 32px; height: 32px; background-color: ' + g.color + '; color: white; font-weight: 700; font-size: 13px;">' + g.name.charAt(0).toUpperCase() + '</span><span style="color: var(--color-text);">' + g.name + '</span></div>';
+            html += '<div class="text-right"><p class="font-bold" style="color: var(--color-text);">' + this.fmt(gd.total) + '</p><p class="text-xs" style="color: ' + (gd.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(gd.diff) + this.changeArrow(gd.diff) + '</p></div>';
+            html += '</div>';
+        });
+        html += '</div>';
+        return html;
+    }
     renderMonthlyReviewSection() {
         const mk = this.reviewMonth;
         let html = '<div class="flex items-center justify-between mb-3">';
@@ -890,10 +953,10 @@ class MoneyTracker {
         }
 
         const overall = this.monthTotalAndDiff(this.accounts, mk);
-        html += '<div class="p-4 rounded-2xl shadow-sm mb-4" style="background-color: var(--color-surface); border: 1px solid var(--color-border);">';
-        html += '<div class="flex items-center gap-2 mb-1"><span>💷</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Overall Wealth</span></div>';
-        html += '<p class="text-3xl font-extrabold" style="color: var(--color-text);">' + this.fmt(overall.total) + '</p>';
-        html += '<p class="text-sm mt-1" style="color: ' + (overall.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(overall.diff) + this.changeArrow(overall.diff) + ' vs ' + this.monthLabel(this.shiftMonthKey(mk,-1)) + '</p>';
+        html += '<div class="p-5 rounded-3xl shadow-sm mb-4 hero-gradient">';
+        html += '<div class="flex items-center gap-2 mb-1"><span>💷</span><span class="text-xs font-bold uppercase tracking-wide" style="color: rgba(255,255,255,0.85);">Overall Wealth</span></div>';
+        html += '<p class="text-4xl font-extrabold text-white">' + this.fmt(overall.total) + '</p>';
+        html += '<p class="text-sm mt-1 font-medium" style="color: white;">' + this.fmtSigned(overall.diff) + this.changeArrow(overall.diff) + ' vs ' + this.monthLabel(this.shiftMonthKey(mk,-1)) + '</p>';
         html += '</div>';
 
         const groups = [];
@@ -954,7 +1017,7 @@ class MoneyTracker {
                 html += '<div class="text-right"><div class="text-lg font-bold" style="color: var(--color-text);">' + this.fmt(total) + '</div>' + diffLine + '</div>';
                 html += '</button>';
                 if (expanded) {
-                    html += '<div style="border-top: 1px solid var(--color-border);">';
+                    html += '<div class="expand-content" style="border-top: 1px solid var(--color-border);">';
                     g.accounts.forEach((a,idx) => { html += this.renderTrackingAccountRow(a, mk, g.color, idx === g.accounts.length - 1); });
                     html += '</div>';
                 }
@@ -983,7 +1046,7 @@ class MoneyTracker {
             html += '<span class="font-medium flex items-center gap-2" style="color: var(--color-text);"><span class="text-xs" style="color: var(--color-text-muted);">' + (expanded?'▾':'▸') + '</span>' + cat.name + '</span>';
             html += '<span class="font-bold" style="color: var(--color-text);">' + this.fmt(rows[0].total) + '</span></button>';
             if (expanded) {
-                html += '<div style="border-top: 1px solid var(--color-border);">';
+                html += '<div class="expand-content" style="border-top: 1px solid var(--color-border);">';
                 rows.forEach((r,idx) => {
                     html += '<div class="flex items-center justify-between p-3 pl-4' + (idx < rows.length-1?' border-b':'') + '" style="' + (idx < rows.length-1?'border-color: var(--color-border);':'') + '"><span class="text-xs" style="color: var(--color-text-muted);">' + this.monthLabel(r.monthKey) + '</span><div class="flex items-center gap-2"><span class="text-sm" style="color: var(--color-text);">' + this.fmt(r.total) + '</span>' + (r.diff !== null ? '<span class="text-xs" style="color: ' + (r.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(r.diff) + '</span>' : '') + '</div></div>';
                 });
@@ -1215,7 +1278,7 @@ class MoneyTracker {
         }
         html += '<input id="ac_start" type="number" step="0.01" placeholder="Opening balance £" value="' + (a?a.startingBalance:'') + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Opening balance as of</p>';
-        html += '<input id="ac_openingmonth" type="month" value="' + (a && a.openingMonth ? a.openingMonth : this.monthKey()) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
+        html += '<input id="ac_openingmonth" type="month" value="' + (a && a.openingMonth ? a.openingMonth : this.currentMonthKey()) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">The tracker will not ask for balances before this month.</p>';
         html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
@@ -1241,6 +1304,19 @@ class MoneyTracker {
             html += '<input id="inc_other_amount" type="number" step="0.01" placeholder="e.g. 200" value="' + (this.income.otherIncomeAmount || '') + '" class="w-full px-3 py-2 rounded border mb-3" style="border-color: var(--color-border);">';
         }
         html += '<button onclick="window.app.saveIncomeSettings(document.getElementById(\'inc_salary\').value, document.getElementById(\'inc_other_toggle\').checked, ' + (this.otherIncomeUIEnabled ? "document.getElementById('inc_other_amount').value" : '0') + ')" class="w-full py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '</div>';
+        html += '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
+        html += '<p class="text-sm font-semibold mb-2" style="color: var(--color-text);">Current Month</p>';
+        html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Controls what counts as "this month" across the app — for monthly tasks, Home, and Tracking.</p>';
+        html += '<div class="flex gap-2 mb-2">';
+        html += '<button onclick="window.app.setCurrentMonthMode(\'calendar\')" class="flex-1 text-xs font-semibold px-3 py-2 rounded-lg" style="background-color: ' + (this.currentMonthMode!=='payday'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.currentMonthMode!=='payday'?'var(--color-primary-text)':'var(--color-text)') + '; border: 1px solid var(--color-border);">Calendar month</button>';
+        html += '<button onclick="window.app.setCurrentMonthMode(\'payday\')" class="flex-1 text-xs font-semibold px-3 py-2 rounded-lg" style="background-color: ' + (this.currentMonthMode==='payday'?'var(--color-primary)':'var(--color-bg)') + '; color: ' + (this.currentMonthMode==='payday'?'var(--color-primary-text)':'var(--color-text)') + '; border: 1px solid var(--color-border);">Payday</button>';
+        html += '</div>';
+        if (this.currentMonthMode === 'payday') {
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Switchover day of month</p>';
+            html += '<div class="flex items-center gap-2 mb-2"><input id="payday_day" type="number" min="1" max="31" value="' + this.paydayDay + '" class="w-20 px-3 py-2 rounded-lg border" style="border-color: var(--color-border);"><button onclick="window.app.savePaydayDay(document.getElementById(\'payday_day\').value)" class="text-xs font-semibold px-3 py-2 rounded-lg text-white" style="background-color: var(--color-primary);">Save</button></div>';
+            html += '<p class="text-xs" style="color: var(--color-text-muted);">E.g. day 23 means the 23rd of one month through the 22nd of the next all count as the following month.</p>';
+        }
         html += '</div>';
         html += '<div class="p-3 rounded-lg border mb-2" style="background-color: var(--color-bg); border-color: var(--color-border);">';
         html += '<p class="text-sm font-semibold mb-2" style="color: var(--color-text);">Planning Targets</p>';
@@ -1284,16 +1360,41 @@ class MoneyTracker {
         this.render();
     }
 
+    toggleSidebar() { this.sidebarOpen = !this.sidebarOpen; this.render(); }
+    navigateTo(tab) { this.currentTab = tab; this.sidebarOpen = false; this.render(); }
+    openSettingsFromSidebar() { this.sidebarOpen = false; this.showSettings = true; this.render(); }
+    renderSidebar() {
+        if (!this.sidebarOpen) return '';
+        const items = [['home','Home','🏠'],['planning','Planning','📋'],['tracking','Tracking','🏦'],['reporting','Reporting','📊']];
+        let html = '<div class="fixed inset-0 z-40 sidebar-backdrop" onclick="window.app.toggleSidebar()" style="background-color: rgba(0,0,0,0.45); backdrop-filter: blur(2px);"></div>';
+        html += '<div class="fixed top-0 left-0 h-full z-50 flex flex-col sidebar-panel" style="width: 78%; max-width: 300px; background-color: var(--color-surface); box-shadow: 4px 0 24px rgba(0,0,0,0.15);">';
+        html += '<div class="hero-gradient flex items-center justify-between p-4"><span class="text-lg font-bold text-white">💷 Money Tracker</span><button onclick="window.app.toggleSidebar()" class="w-8 h-8 rounded-full flex items-center justify-center" style="background-color: rgba(255,255,255,0.25); color: white;">×</button></div>';
+        html += '<div class="flex-1 p-3">';
+        items.forEach(([key,label,icon]) => {
+            const active = this.currentTab === key;
+            html += '<button onclick="window.app.navigateTo(\'' + key + '\')" class="w-full flex items-center gap-3 p-3 rounded-xl mb-1 text-left" style="background-color: ' + (active ? 'var(--color-secondary)' : 'transparent') + '; border-left: 3px solid ' + (active ? 'var(--color-primary)' : 'transparent') + ';"><span class="flex items-center justify-center rounded-full" style="width: 34px; height: 34px; font-size: 17px; background-color: ' + (active ? 'var(--color-primary)' : 'var(--color-bg)') + ';">' + icon + '</span><span class="font-semibold" style="color: ' + (active ? 'var(--color-primary)' : 'var(--color-text)') + ';">' + label + '</span></button>';
+        });
+        html += '</div>';
+        html += '<div class="p-3" style="border-top: 1px solid var(--color-border);"><button onclick="window.app.openSettingsFromSidebar()" class="w-full flex items-center gap-3 p-3 rounded-xl text-left"><span class="flex items-center justify-center rounded-full" style="width: 34px; height: 34px; font-size: 17px; background-color: var(--color-bg);">⚙️</span><span class="font-semibold" style="color: var(--color-text);">Settings</span></button></div>';
+        html += '</div>';
+        return html;
+    }
     render() {
         let content = '';
-        if (this.currentTab === 'planning') content = this.renderPlanningTab();
+        if (this.currentTab === 'home') content = this.renderHomeTab();
+        else if (this.currentTab === 'planning') content = this.renderPlanningTab();
         else if (this.currentTab === 'tracking') content = this.renderTrackingTab();
         else if (this.currentTab === 'reporting') content = this.renderReportingTab();
 
-        const tabs = [['planning','Planning'],['tracking','Tracking'],['reporting','Reporting']];
-        let tabsHtml = tabs.map(([key,label]) => '<button onclick="window.app.currentTab = \'' + key + '\'; window.app.render()" class="py-3 px-4 font-medium text-sm whitespace-nowrap" style="color: ' + (this.currentTab===key?'var(--color-primary)':'var(--color-text-muted)') + '; border-bottom: 2px solid ' + (this.currentTab===key?'var(--color-primary)':'transparent') + ';">' + label + '</button>').join('');
+        const tabLabels = { home: 'Home', planning: 'Planning', tracking: 'Tracking', reporting: 'Reporting' };
 
-        const html = '<div style="background-color: var(--color-bg); min-height: 100vh;"><div class="sticky top-0 z-50" style="background-color: var(--color-surface); border-bottom: 1px solid var(--color-border);"><div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between"><h1 class="text-2xl font-bold" style="color: var(--color-text);">💷 Money Tracker</h1><div class="flex gap-2"><button onclick="window.app.toggleSettings()" class="w-10 h-10 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">⚙️</button></div></div>' + (this.showSettings ? this.renderSettings() : '') + '<div class="max-w-4xl mx-auto px-4 flex gap-2 border-t overflow-x-auto" style="border-color: var(--color-border);">' + tabsHtml + '</div></div><div class="max-w-4xl mx-auto px-4 py-6 pb-20">' + content + '</div></div>';
+        let html = '<div style="background-color: var(--color-bg); min-height: 100vh;">';
+        html += '<div class="sticky top-0 z-30" style="background-color: var(--color-surface); border-bottom: 1px solid var(--color-border);"><div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">';
+        html += '<div class="flex items-center gap-3"><button onclick="window.app.toggleSidebar()" class="w-10 h-10 rounded-full flex items-center justify-center" style="background-color: var(--color-secondary); color: var(--color-text);">☰</button><h1 class="text-lg font-bold" style="color: var(--color-text);">' + tabLabels[this.currentTab] + '</h1></div>';
+        html += '<span class="text-xl">💷</span>';
+        html += '</div>' + (this.showSettings ? this.renderSettings() : '') + '</div>';        html += '<div class="max-w-4xl mx-auto px-4 py-6 pb-20">' + content + '</div>';
+        html += this.renderSidebar();
+        html += '</div>';
 
         document.getElementById('app').innerHTML = html;
     }
