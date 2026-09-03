@@ -1708,6 +1708,12 @@ function renderLoadErrorScreen(message) {
         '<button onclick="auth.signOut()" class="text-sm font-semibold underline mt-3" style="color: var(--color-accent);">Sign out</button>' +
         '</div>';
 }
+auth.getRedirectResult().catch(err => {
+    console.error('Redirect sign-in error:', err);
+    renderLoginScreen();
+    const el = document.getElementById('login-error');
+    if (el) el.textContent = 'Sign-in failed: ' + err.message;
+});
 auth.onAuthStateChanged(async (user) => {
     if (!user) {
         window.app = null;
