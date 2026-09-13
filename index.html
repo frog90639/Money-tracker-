@@ -97,7 +97,7 @@ class MoneyTracker {
         this.accountFormStartUI = undefined;
         this.accountFormOpeningMonthUI = undefined;
         this.accountFormClosedMonthUI = undefined;
-        this.accountFormLinkedCategoryUI = undefined;
+        this.accountFormLinkedCategories = [];
         this.addingAccountCategory = false;
         this.editingAccountCategory = null;
         this.addingCategory = false;
@@ -238,7 +238,7 @@ class MoneyTracker {
     toggleAddAccount() {
         this.addingAccount = !this.addingAccount; this.editingAccount = null;
         this.accountFormCategoryUI = ''; this.accountFormLISAUI = false; this.accountFormClosedUI = false;
-        this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined; this.accountFormLinkedCategoryUI = undefined;
+        this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined; this.accountFormLinkedCategories = [];
         this.render();
     }
     toggleEditAccount(id) {
@@ -248,7 +248,8 @@ class MoneyTracker {
             this.accountFormCategoryUI = a ? a.categoryId : '';
             this.accountFormLISAUI = a ? !!a.isLISA : false;
             this.accountFormClosedUI = a ? !!a.closed : false;
-            this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined; this.accountFormLinkedCategoryUI = undefined;
+            this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined;
+            this.accountFormLinkedCategories = a ? this.getAccountLinkedCategoryIds(a).slice() : [];
         }
         this.render();
     }
@@ -257,12 +258,18 @@ class MoneyTracker {
         const startEl = document.getElementById('ac_start');
         const monthEl = document.getElementById('ac_openingmonth');
         const closedMonthEl = document.getElementById('ac_closedmonth');
-        const linkedCatEl = document.getElementById('ac_linkedcategory');
         if (nameEl) this.accountFormNameUI = nameEl.value;
         if (startEl) this.accountFormStartUI = startEl.value;
         if (monthEl) this.accountFormOpeningMonthUI = monthEl.value;
         if (closedMonthEl) this.accountFormClosedMonthUI = closedMonthEl.value;
-        if (linkedCatEl) this.accountFormLinkedCategoryUI = linkedCatEl.value;
+    }
+    addLinkedCategoryToAccountForm(categoryId) {
+        if (categoryId && !this.accountFormLinkedCategories.includes(categoryId)) this.accountFormLinkedCategories.push(categoryId);
+        this.render();
+    }
+    removeLinkedCategoryFromAccountForm(categoryId) {
+        this.accountFormLinkedCategories = this.accountFormLinkedCategories.filter(id => id !== categoryId);
+        this.render();
     }
     setAccountFormCategory(categoryId) { this.captureAccountFormState(); this.accountFormCategoryUI = categoryId; this.render(); }
     setAccountFormLISA(checked) { this.captureAccountFormState(); this.accountFormLISAUI = checked; this.render(); }
@@ -272,7 +279,8 @@ class MoneyTracker {
         if (cat && cat.trackInput) return true;
         return this.isPensionCategoryId(categoryId) && !!lisaChecked;
     }
-    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth, isLISA, manualGrowth, closed, closedMonth, linkedCategoryId) {
+    getAccountLinkedCategoryIds(a) { return a.linkedCategoryIds || (a.linkedCategoryId ? [a.linkedCategoryId] : []); }
+    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth, isLISA, manualGrowth, closed, closedMonth) {
         if (!name) return;
         const isISA = this.isISACategoryId(categoryId);
         const isPension = this.isPensionCategoryId(categoryId);
@@ -280,13 +288,13 @@ class MoneyTracker {
         const willTrackInput = this.accountWillTrackInput(categoryId, isLISA);
         const isClosed = !!closed;
         const validClosedMonth = isClosed && /^\d{4}-\d{2}$/.test(closedMonth || '') ? closedMonth : (isClosed ? this.currentMonthKey() : undefined);
-        const validLinkedCategoryId = willTrackInput && linkedCategoryId ? linkedCategoryId : undefined;
+        const validLinkedCategoryIds = willTrackInput ? this.accountFormLinkedCategories.slice() : [];
         if (id) {
             const a = this.accounts.find(x => x.id === id);
-            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; a.isLISA = isPension ? !!isLISA : undefined; a.manualGrowth = willTrackInput ? !!manualGrowth : undefined; a.closed = isClosed; a.closedMonth = validClosedMonth; a.linkedCategoryId = validLinkedCategoryId; }
+            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; a.isLISA = isPension ? !!isLISA : undefined; a.manualGrowth = !!manualGrowth; a.closed = isClosed; a.closedMonth = validClosedMonth; a.linkedCategoryIds = validLinkedCategoryIds; a.linkedCategoryId = undefined; }
             this.editingAccount = null;
         } else {
-            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: willTrackInput ? !!manualGrowth : undefined, closed: isClosed, closedMonth: validClosedMonth, linkedCategoryId: validLinkedCategoryId });
+            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: !!manualGrowth, closed: isClosed, closedMonth: validClosedMonth, linkedCategoryIds: validLinkedCategoryIds });
             this.addingAccount = false;
             const groupKey = categoryId || '__uncategorised';
             this.expandedTrackingCategories[groupKey] = true;
@@ -450,15 +458,16 @@ class MoneyTracker {
         return (task.linkedCategoryIds || []).reduce((s,catId) => { const c = this.categories.find(x => x.id === catId); return c ? s + this.categoryBudgetAmount(c) : s; }, 0);
     }
     copyPlanningAmountsToTracking() {
-        const linkedAccounts = this.accounts.filter(a => a.linkedCategoryId);
+        const linkedAccounts = this.accounts.filter(a => this.getAccountLinkedCategoryIds(a).length > 0);
         if (linkedAccounts.length === 0) { alert('No accounts are linked to a planning category yet. Set this up by editing an account in Settings → Tracking → Accounts.'); return; }
         if (!confirm('This will overwrite the "Put in" amount already entered this month for linked accounts. Continue?')) return;
         const mk = this.trackingMonth;
         let count = 0;
         linkedAccounts.forEach(a => {
-            const cat = this.categories.find(c => c.id === a.linkedCategoryId);
-            if (!cat) return;
-            const amount = this.categoryBudgetAmount(cat);
+            const amount = this.getAccountLinkedCategoryIds(a).reduce((sum,catId) => {
+                const cat = this.categories.find(c => c.id === catId);
+                return cat ? sum + this.categoryBudgetAmount(cat) : sum;
+            }, 0);
             let entry = this.entryAt(a.id, mk);
             if (!entry) { entry = { id: this.uid(), accountId: a.id, monthKey: mk, balance: this.balanceAsOf(a.id, mk) }; this.monthlyBalances.push(entry); }
             entry.input = amount;
@@ -936,7 +945,7 @@ class MoneyTracker {
         const baseline = prev ? prev.balance : (parseFloat(a.startingBalance) || 0);
         const diff = entry ? entry.balance - baseline : null;
         const tracksInput = this.accountTracksInput(a.id);
-        const manualGrowth = tracksInput && !!a.manualGrowth;
+        const manualGrowth = !!a.manualGrowth;
         const isEditing = this.editingTrackingBalance === a.id || !entry;
         let html = '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);">';
         html += '<div class="flex items-center justify-between mb-2"><div><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span>' + (a.isaType ? ' <span class="text-xs" style="color: var(--color-text-muted);">(' + this.isaTypeLabel(a.isaType) + ')</span>' : '') + (a.isLISA ? ' <span class="text-xs" style="color: var(--color-text-muted);">(LISA)</span>' : '') + (a.closed ? ' <span class="text-xs" style="color: var(--color-text-muted);">(Closed)</span>' : '') + '</div></div>';
@@ -964,6 +973,8 @@ class MoneyTracker {
                 const growth = manualGrowth && entry.growth !== undefined ? (parseFloat(entry.growth) || 0) : (diff - monthInput);
                 const growthNote = manualGrowth && entry.growth !== undefined ? ' (manual)' : '';
                 html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + ' — ' + this.fmt(monthInput) + ' put in, ' + this.fmtSigned(growth) + ' growth' + growthNote + '</p>';
+            } else if (manualGrowth && entry.growth !== undefined) {
+                html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + ' — ' + this.fmtSigned(parseFloat(entry.growth) || 0) + ' growth (manual)</p>';
             } else {
                 html += '<p class="text-xs mt-2" style="color: ' + (diff >= 0 ? 'var(--color-success)' : 'var(--color-error)') + ';">' + this.fmtSigned(diff) + ' vs ' + (prev ? this.monthLabel(prev.monthKey) : 'opening balance') + '</p>';
             }
@@ -1111,7 +1122,7 @@ class MoneyTracker {
         html += '<button onclick="window.app.shiftTrackingMonth(12)" class="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0" style="background-color: var(--color-secondary); color: var(--color-text); font-size: 12px;">»</button>';
         html += '</div>';
 
-        if (this.accounts.some(a => a.linkedCategoryId)) {
+        if (this.accounts.some(a => this.getAccountLinkedCategoryIds(a).length > 0)) {
             html += '<button onclick="window.app.copyPlanningAmountsToTracking()" class="w-full text-xs font-semibold px-3 py-2 rounded-lg mb-4" style="background-color: var(--color-secondary); color: var(--color-text);">📋➡️🏦 Copy over amounts</button>';
         }
 
@@ -1405,18 +1416,21 @@ class MoneyTracker {
         }
         let manualGrowthArg = 'false';
         const willTrackInput = this.accountWillTrackInput(categoryUI, this.accountFormLISAUI);
+        html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="ac_manualgrowth" type="checkbox" ' + (a && a.manualGrowth ? 'checked' : '') + '> Enter interest/growth manually?</label>';
+        html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">If ticked, you will type the interest/growth each month on Tracking instead of it being calculated from the balance change.</p>';
+        manualGrowthArg = "document.getElementById('ac_manualgrowth').checked";
         if (willTrackInput) {
-            html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="ac_manualgrowth" type="checkbox" ' + (a && a.manualGrowth ? 'checked' : '') + '> Enter interest/growth manually?</label>';
-            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">If ticked, you will type the interest/growth each month on Tracking instead of it being calculated as balance change minus what you put in.</p>';
-            manualGrowthArg = "document.getElementById('ac_manualgrowth').checked";
-        }
-        let linkedCategoryArg = 'null';
-        if (willTrackInput) {
-            const linkedUI = this.accountFormLinkedCategoryUI !== undefined ? this.accountFormLinkedCategoryUI : (a && a.linkedCategoryId ? a.linkedCategoryId : '');
-            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Link to planning category (optional)</p>';
-            html += '<select id="ac_linkedcategory" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);"><option value="">None</option>' + this.categories.map(c => '<option value="' + c.id + '"' + (linkedUI===c.id?' selected':'') + '>' + c.name + '</option>').join('') + '</select>';
-            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">Lets you use "Copy over amounts" on Tracking to fill this account\'s "Put in" figure straight from that category\'s planning budget.</p>';
-            linkedCategoryArg = "document.getElementById('ac_linkedcategory').value";
+            html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Link to planning categories (optional)</p>';
+            if (this.accountFormLinkedCategories.length === 0) html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">None linked yet.</p>';
+            this.accountFormLinkedCategories.forEach(catId => {
+                const cat = this.categories.find(x => x.id === catId);
+                html += '<div class="flex items-center justify-between p-2 mb-1 rounded border" style="background-color: var(--color-bg); border-color: var(--color-border);"><span class="text-sm" style="color: var(--color-text);">' + (cat ? cat.name : 'Unknown') + '</span><button onclick="window.app.removeLinkedCategoryFromAccountForm(\'' + catId + '\')" class="text-xs px-2 py-1 rounded" style="background-color: var(--color-error); color: white;">×</button></div>';
+            });
+            const availableCats = this.categories.filter(c => !this.accountFormLinkedCategories.includes(c.id));
+            if (availableCats.length > 0) {
+                html += '<div class="flex items-center gap-2 mt-1 mb-2"><select id="ac_link_select" class="flex-1 px-2 py-2 rounded border text-sm" style="border-color: var(--color-border);">' + availableCats.map(c => '<option value="' + c.id + '">' + c.name + '</option>').join('') + '</select><button onclick="window.app.addLinkedCategoryToAccountForm(document.getElementById(\'ac_link_select\').value)" class="text-xs px-3 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">+ Add</button></div>';
+            }
+            html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">"Copy over amounts" on Tracking fills this account\'s "Put in" figure from the sum of these categories\' planning budgets.</p>';
         }
         html += '<input id="ac_start" type="number" step="0.01" placeholder="Opening balance £" value="' + (this.accountFormStartUI !== undefined ? this.accountFormStartUI : (a?a.startingBalance:'')) + '" class="w-full px-3 py-2 rounded border mb-2" style="border-color: var(--color-border);">';
         html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Opening balance as of</p>';
@@ -1430,7 +1444,7 @@ class MoneyTracker {
             html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">The tracker will not ask for balances after this month.</p>';
             closedMonthArg = "document.getElementById('ac_closedmonth').value";
         }
-        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ', document.getElementById(\'ac_closed\').checked, ' + closedMonthArg + ', ' + linkedCategoryArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ', document.getElementById(\'ac_closed\').checked, ' + closedMonthArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
@@ -1549,7 +1563,7 @@ class MoneyTracker {
             { icon: '💷', title: 'Payday-based months', desc: 'In Settings → Income, switch "Current Month" from Calendar to Payday and set your pay date — e.g. the 23rd to the 22nd counts as one month, instead of the calendar month.' },
             { icon: '📄', title: 'PDF Report', desc: 'Settings → Reporting → PDF Report lets you generate a printable report filtered by year, month, and account — handy for record-keeping or sharing.' },
             { icon: '🔗', title: 'Link tasks to Planning', desc: 'Turn on "Link tasks to planning amounts" in Settings → Monthly Tasks, then attach Planning categories to a task like "Transfer to savings". Its total updates automatically, so you always know exactly how much to move without doing the maths yourself each month.' },
-            { icon: '📋➡️🏦', title: 'Copy Planning amounts into Tracking', desc: 'In an account settings screen, link it to a Planning category (only shown for accounts that track input). On Tracking, a "Copy over amounts" button fills that account "Put in" figure straight from your Planning budget for the month you are viewing — no retyping the same number twice.' },
+            { icon: '📋➡️🏦', title: 'Copy Planning amounts into Tracking', desc: 'In an account settings screen, link it to one or more Planning categories (only shown for accounts that track input) — their budgeted amounts add together. On Tracking, a "Copy over amounts" button fills that account "Put in" figure straight from that total for the month you are viewing — no retyping the same number twice.' },
             { icon: '🔕', title: 'Turn off end of month comments', desc: 'If the "How did it go?" prompt on Tracking is not for you, turn it off in Settings → Tracking → Accounts.' },
             { icon: '👉', title: 'Swipe to go back', desc: 'Swipe right anywhere on the screen to go back to whatever page you were on before — no need to hunt for a back button.' },
             { icon: '🔒', title: 'Closed accounts', desc: 'Mark an account as closed with a date in its settings, and Tracking will stop asking for new balances on it after that month.' },
