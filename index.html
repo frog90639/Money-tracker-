@@ -85,6 +85,7 @@ class MoneyTracker {
         this.groupTargets = data?.groupTargets || { essential: 50, saving: 30, spending: 20 };
         this.currentTab = 'home';
         this.navHistory = [];
+        this.viewingAccountCategoryId = null;
         this.sidebarOpen = false;
         this.settingsSection = 'accounts';
         this.expandedSettingsGroups = { planning: false, tracking: false, reporting: false };
@@ -647,8 +648,7 @@ class MoneyTracker {
         return parseFloat(acc.startingBalance) || 0;
     }
     toggleReportCategoryExpand(id) { this.expandedReportCategories[id] = !this.expandedReportCategories[id]; this.render(); }
-    categoryMonthlyTotals(categoryId) {
-        const accIds = this.accounts.filter(a => a.categoryId === categoryId).map(a => a.id);
+    accountsMonthlyTotals(accIds) {
         const months = this.allMonthKeysSorted();
         if (accIds.length === 0 || months.length === 0) return [];
         let prevTotal = null;
@@ -658,6 +658,17 @@ class MoneyTracker {
             prevTotal = total;
             return { monthKey: mk, total, diff };
         });
+    }
+    categoryMonthlyTotals(categoryId) {
+        const accIds = this.accounts.filter(a => a.categoryId === categoryId).map(a => a.id);
+        return this.accountsMonthlyTotals(accIds);
+    }
+    getCategoryHistoryAccounts(categoryId) {
+        if (categoryId === '__uncategorised') return this.accounts.filter(a => !this.accountCategories.some(c => c.id === a.categoryId));
+        return this.accounts.filter(a => a.categoryId === categoryId);
+    }
+    categoryHistoryName(categoryId) {
+        return categoryId === '__uncategorised' ? 'Uncategorised' : this.accountCategoryName(categoryId);
     }
     exportCSV() {
         let csv = 'Month,Account,Account Type,Balance\n';
@@ -1070,17 +1081,48 @@ class MoneyTracker {
         const groups = [];
         this.accountCategories.forEach(cat => {
             const accs = this.accounts.filter(a => a.categoryId === cat.id);
-            if (accs.length) groups.push({ name: cat.name, color: this.accountCategoryColor(cat.id), accounts: accs });
+            if (accs.length) groups.push({ id: cat.id, name: cat.name, color: this.accountCategoryColor(cat.id), accounts: accs });
         });
         const uncategorised = this.accounts.filter(a => !this.accountCategories.some(c => c.id === a.categoryId));
-        if (uncategorised.length) groups.push({ name: 'Uncategorised', color: this.accountCategoryColor(''), accounts: uncategorised });
+        if (uncategorised.length) groups.push({ id: '__uncategorised', name: 'Uncategorised', color: this.accountCategoryColor(''), accounts: uncategorised });
 
         html += '<div class="rounded-2xl shadow-sm overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 p-4 pb-2"><span>📊</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">By Category</span></div>';
         groups.forEach((g,idx) => {
             const gd = this.monthTotalAndDiff(g.accounts, mk);
-            html += '<div class="flex items-center justify-between p-4 pt-2' + (idx < groups.length-1?' border-b':'') + '" style="border-color: var(--color-border);">';
+            html += '<button onclick="window.app.navigateToCategoryHistory(\'' + g.id + '\')" class="w-full flex items-center justify-between p-4 pt-2 text-left' + (idx < groups.length-1?' border-b':'') + '" style="border-color: var(--color-border);">';
             html += '<div class="flex items-center gap-3"><span class="flex items-center justify-center rounded-full" style="width: 32px; height: 32px; background-color: ' + g.color + '; color: white; font-weight: 700; font-size: 13px;">' + g.name.charAt(0).toUpperCase() + '</span><span style="color: var(--color-text);">' + g.name + '</span></div>';
-            html += '<div class="text-right"><p class="font-bold" style="color: var(--color-text);">' + this.fmt(gd.total) + '</p><p class="text-xs" style="color: ' + (gd.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(gd.diff) + this.changeArrow(gd.diff) + '</p></div>';
+            html += '<div class="flex items-center gap-2"><div class="text-right"><p class="font-bold" style="color: var(--color-text);">' + this.fmt(gd.total) + '</p><p class="text-xs" style="color: ' + (gd.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(gd.diff) + this.changeArrow(gd.diff) + '</p></div><span class="text-xs" style="color: var(--color-text-muted);">›</span></div>';
+            html += '</button>';
+        });
+        html += '</div>';
+        return html;
+    }
+    // ---------- RENDER: CATEGORY HISTORY (reached from Home, lives within Reporting) ----------
+    renderCategoryHistoryTab() {
+        const categoryId = this.viewingAccountCategoryId;
+        if (!categoryId) return '<p class="text-center py-8" style="color: var(--color-text-muted);">No account type selected.</p>';
+        const catName = this.categoryHistoryName(categoryId);
+        const color = this.accountCategoryColor(categoryId === '__uncategorised' ? '' : categoryId);
+        const accountIds = this.getCategoryHistoryAccounts(categoryId).map(a => a.id);
+        const rows = this.accountsMonthlyTotals(accountIds).slice().reverse();
+
+        let html = '<div class="flex items-center gap-3 mb-4"><span class="flex items-center justify-center rounded-full" style="width: 40px; height: 40px; background-color: ' + color + '; color: white; font-weight: 700; font-size: 16px;">' + catName.charAt(0).toUpperCase() + '</span><p class="text-xl font-bold" style="color: var(--color-text);">' + catName + '</p></div>';
+
+        if (rows.length === 0) {
+            html += '<p class="text-center py-8" style="color: var(--color-text-muted);">No balances recorded yet for this account type.</p>';
+            return html;
+        }
+
+        html += '<div class="p-5 rounded-3xl shadow-sm mb-4 hero-gradient">';
+        html += '<div class="flex items-center gap-2 mb-1"><span>💷</span><span class="text-xs font-bold uppercase tracking-wide" style="color: rgba(255,255,255,0.85);">Current Total</span></div>';
+        html += '<p class="text-4xl font-extrabold text-white">' + this.fmt(rows[0].total) + '</p>';
+        html += '</div>';
+
+        html += '<div class="rounded-2xl shadow-sm overflow-hidden" style="background-color: var(--color-surface); border: 1px solid var(--color-border);"><div class="flex items-center gap-2 p-4 pb-2"><span>📅</span><span class="text-xs font-bold uppercase tracking-wide" style="color: var(--color-text-muted);">Month by Month</span></div>';
+        rows.forEach((r,idx) => {
+            html += '<div class="flex items-center justify-between p-4 pt-2' + (idx < rows.length-1?' border-b':'') + '" style="border-color: var(--color-border);">';
+            html += '<span style="color: var(--color-text);">' + this.monthLabel(r.monthKey) + '</span>';
+            html += '<div class="text-right"><p class="font-bold" style="color: var(--color-text);">' + this.fmt(r.total) + '</p>' + (r.diff !== null ? '<p class="text-xs" style="color: ' + (r.diff>=0?'var(--color-success)':'var(--color-error)') + ';">' + this.fmtSigned(r.diff) + this.changeArrow(r.diff) + '</p>' : '') + '</div>';
             html += '</div>';
         });
         html += '</div>';
@@ -1572,6 +1614,13 @@ class MoneyTracker {
         this.settingsSection = sectionKey;
         this.render();
     }
+    navigateToCategoryHistory(categoryId) {
+        if (this.currentTab !== 'categoryHistory') this.navHistory.push(this.currentTab);
+        this.viewingAccountCategoryId = categoryId;
+        this.currentTab = 'categoryHistory';
+        this.sidebarOpen = false;
+        this.render();
+    }
     goBack() {
         if (this.navHistory.length === 0) return;
         this.currentTab = this.navHistory.pop();
@@ -1675,12 +1724,13 @@ class MoneyTracker {
         if (this.currentTab === 'starthere') content = this.renderStartHereTab();
         else if (this.currentTab === 'home') content = this.renderHomeTab();
         else if (this.currentTab === 'tips') content = this.renderTipsTab();
+        else if (this.currentTab === 'categoryHistory') content = this.renderCategoryHistoryTab();
         else if (this.currentTab === 'planning') content = this.renderPlanningTab();
         else if (this.currentTab === 'tracking') content = this.renderTrackingTab();
         else if (this.currentTab === 'reporting') content = this.renderReportingTab();
         else if (this.currentTab === 'settings') content = this.renderSettings();
 
-        const tabLabels = { starthere: 'Start Here', home: 'Home', tips: 'Tips', planning: 'Planning', tracking: 'Tracking', reporting: 'Reporting', settings: 'Settings' };
+        const tabLabels = { starthere: 'Start Here', home: 'Home', tips: 'Tips', categoryHistory: this.viewingAccountCategoryId ? this.categoryHistoryName(this.viewingAccountCategoryId) : 'History', planning: 'Planning', tracking: 'Tracking', reporting: 'Reporting', settings: 'Settings' };
 
         let html = '<div style="background-color: var(--color-bg); min-height: 100vh;">';
         html += '<div class="sticky top-0 z-30" style="background-color: var(--color-surface); border-bottom: 1px solid var(--color-border);"><div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">';
