@@ -98,6 +98,7 @@ class MoneyTracker {
         this.accountFormOpeningMonthUI = undefined;
         this.accountFormClosedMonthUI = undefined;
         this.accountFormLinkedCategories = [];
+        this.accountFormTrackInputUI = false;
         this.addingAccountCategory = false;
         this.editingAccountCategory = null;
         this.addingCategory = false;
@@ -237,7 +238,7 @@ class MoneyTracker {
     isaTypeLabel(isaType) { return isaType === 'stocks_and_shares' ? 'Stocks and Shares' : 'Cash'; }
     toggleAddAccount() {
         this.addingAccount = !this.addingAccount; this.editingAccount = null;
-        this.accountFormCategoryUI = ''; this.accountFormLISAUI = false; this.accountFormClosedUI = false;
+        this.accountFormCategoryUI = ''; this.accountFormLISAUI = false; this.accountFormClosedUI = false; this.accountFormTrackInputUI = false;
         this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined; this.accountFormLinkedCategories = [];
         this.render();
     }
@@ -248,6 +249,7 @@ class MoneyTracker {
             this.accountFormCategoryUI = a ? a.categoryId : '';
             this.accountFormLISAUI = a ? !!a.isLISA : false;
             this.accountFormClosedUI = a ? !!a.closed : false;
+            this.accountFormTrackInputUI = a ? this.accountTracksInput(a.id) : false;
             this.accountFormNameUI = undefined; this.accountFormStartUI = undefined; this.accountFormOpeningMonthUI = undefined; this.accountFormClosedMonthUI = undefined;
             this.accountFormLinkedCategories = a ? this.getAccountLinkedCategoryIds(a).slice() : [];
         }
@@ -271,30 +273,41 @@ class MoneyTracker {
         this.accountFormLinkedCategories = this.accountFormLinkedCategories.filter(id => id !== categoryId);
         this.render();
     }
-    setAccountFormCategory(categoryId) { this.captureAccountFormState(); this.accountFormCategoryUI = categoryId; this.render(); }
-    setAccountFormLISA(checked) { this.captureAccountFormState(); this.accountFormLISAUI = checked; this.render(); }
+    setAccountFormCategory(categoryId) {
+        this.captureAccountFormState();
+        this.accountFormCategoryUI = categoryId;
+        if (this.accountWillTrackInput(categoryId, this.accountFormLISAUI)) this.accountFormTrackInputUI = true;
+        this.render();
+    }
+    setAccountFormLISA(checked) {
+        this.captureAccountFormState();
+        this.accountFormLISAUI = checked;
+        if (checked) this.accountFormTrackInputUI = true;
+        this.render();
+    }
     setAccountFormClosed(checked) { this.captureAccountFormState(); this.accountFormClosedUI = checked; this.render(); }
+    setAccountFormTrackInput(checked) { this.captureAccountFormState(); this.accountFormTrackInputUI = checked; this.render(); }
     accountWillTrackInput(categoryId, lisaChecked) {
         const cat = this.accountCategories.find(c => c.id === categoryId);
         if (cat && cat.trackInput) return true;
         return this.isPensionCategoryId(categoryId) && !!lisaChecked;
     }
     getAccountLinkedCategoryIds(a) { return a.linkedCategoryIds || (a.linkedCategoryId ? [a.linkedCategoryId] : []); }
-    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth, isLISA, manualGrowth, closed, closedMonth) {
+    saveAccount(id, name, categoryId, startingBalance, isaType, openingMonth, isLISA, manualGrowth, closed, closedMonth, trackInput) {
         if (!name) return;
         const isISA = this.isISACategoryId(categoryId);
         const isPension = this.isPensionCategoryId(categoryId);
         const validMonth = /^\d{4}-\d{2}$/.test(openingMonth || '') ? openingMonth : this.currentMonthKey();
-        const willTrackInput = this.accountWillTrackInput(categoryId, isLISA);
+        const tracksInputChecked = !!trackInput;
         const isClosed = !!closed;
         const validClosedMonth = isClosed && /^\d{4}-\d{2}$/.test(closedMonth || '') ? closedMonth : (isClosed ? this.currentMonthKey() : undefined);
-        const validLinkedCategoryIds = willTrackInput ? this.accountFormLinkedCategories.slice() : [];
+        const validLinkedCategoryIds = tracksInputChecked ? this.accountFormLinkedCategories.slice() : [];
         if (id) {
             const a = this.accounts.find(x => x.id === id);
-            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; a.isLISA = isPension ? !!isLISA : undefined; a.manualGrowth = !!manualGrowth; a.closed = isClosed; a.closedMonth = validClosedMonth; a.linkedCategoryIds = validLinkedCategoryIds; a.linkedCategoryId = undefined; }
+            if (a) { a.name = name; a.categoryId = categoryId; a.startingBalance = parseFloat(startingBalance) || 0; a.isaType = isISA ? (isaType || 'cash') : undefined; a.openingMonth = validMonth; a.isLISA = isPension ? !!isLISA : undefined; a.manualGrowth = !!manualGrowth; a.closed = isClosed; a.closedMonth = validClosedMonth; a.linkedCategoryIds = validLinkedCategoryIds; a.linkedCategoryId = undefined; a.tracksInput = tracksInputChecked; }
             this.editingAccount = null;
         } else {
-            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: !!manualGrowth, closed: isClosed, closedMonth: validClosedMonth, linkedCategoryIds: validLinkedCategoryIds });
+            this.accounts.push({ id: this.uid(), name, categoryId, startingBalance: parseFloat(startingBalance) || 0, isaType: isISA ? (isaType || 'cash') : undefined, openingMonth: validMonth, isLISA: isPension ? !!isLISA : undefined, manualGrowth: !!manualGrowth, closed: isClosed, closedMonth: validClosedMonth, linkedCategoryIds: validLinkedCategoryIds, tracksInput: tracksInputChecked });
             this.addingAccount = false;
             const groupKey = categoryId || '__uncategorised';
             this.expandedTrackingCategories[groupKey] = true;
@@ -526,6 +539,8 @@ class MoneyTracker {
     accountTracksInput(accId) {
         const acc = this.accounts.find(a => a.id === accId);
         if (!acc) return false;
+        if (acc.tracksInput !== undefined) return acc.tracksInput;
+        // Legacy fallback for accounts saved before "Track amount put in?" was an explicit per-account choice.
         if (acc.isLISA) return true;
         const cat = this.accountCategories.find(c => c.id === acc.categoryId);
         return !!(cat && cat.trackInput);
@@ -1415,11 +1430,13 @@ class MoneyTracker {
             lisaArg = "document.getElementById('ac_lisa').checked";
         }
         let manualGrowthArg = 'false';
-        const willTrackInput = this.accountWillTrackInput(categoryUI, this.accountFormLISAUI);
+        html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="ac_trackinput" type="checkbox" ' + (this.accountFormTrackInputUI ? 'checked' : '') + ' onchange="window.app.setAccountFormTrackInput(this.checked)"> Track amount put in?</label>';
+        html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">If ticked, you get a "Put in" field each month on Tracking for contributions/deposits — independent of account type.</p>';
+        const trackInputArg = "document.getElementById('ac_trackinput').checked";
         html += '<label class="flex items-center gap-2 mb-2" style="color: var(--color-text);"><input id="ac_manualgrowth" type="checkbox" ' + (a && a.manualGrowth ? 'checked' : '') + '> Enter interest/growth manually?</label>';
         html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">If ticked, you will type the interest/growth each month on Tracking instead of it being calculated from the balance change.</p>';
         manualGrowthArg = "document.getElementById('ac_manualgrowth').checked";
-        if (willTrackInput) {
+        if (this.accountFormTrackInputUI) {
             html += '<p class="text-xs mb-1" style="color: var(--color-text-muted);">Link to planning categories (optional)</p>';
             if (this.accountFormLinkedCategories.length === 0) html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">None linked yet.</p>';
             this.accountFormLinkedCategories.forEach(catId => {
@@ -1444,7 +1461,7 @@ class MoneyTracker {
             html += '<p class="text-xs mb-2" style="color: var(--color-text-muted);">The tracker will not ask for balances after this month.</p>';
             closedMonthArg = "document.getElementById('ac_closedmonth').value";
         }
-        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ', document.getElementById(\'ac_closed\').checked, ' + closedMonthArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
+        html += '<div class="flex gap-2"><button onclick="window.app.saveAccount(' + (isEdit?"'"+a.id+"'":'null') + ', document.getElementById(\'ac_name\').value, document.getElementById(\'ac_category\').value, document.getElementById(\'ac_start\').value, ' + isaTypeArg + ', document.getElementById(\'ac_openingmonth\').value, ' + lisaArg + ', ' + manualGrowthArg + ', document.getElementById(\'ac_closed\').checked, ' + closedMonthArg + ', ' + trackInputArg + ')" class="flex-1 py-2 rounded text-white" style="background-color: var(--color-primary);">Save</button>';
         html += '<button onclick="window.app.' + (isEdit?'toggleEditAccount(\''+a.id+'\')':'toggleAddAccount()') + '" class="flex-1 py-2 rounded" style="background-color: var(--color-secondary); color: var(--color-text);">Cancel</button></div></div>';
         return html;
     }
