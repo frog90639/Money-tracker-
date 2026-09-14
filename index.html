@@ -551,8 +551,16 @@ class MoneyTracker {
         let entry = this.entryAt(accountId, mk);
         if (!entry) { entry = { id: this.uid(), accountId, monthKey: mk, balance }; this.monthlyBalances.push(entry); }
         else entry.balance = balance;
-        if (inputStr !== undefined && inputStr !== null) entry.input = parseFloat(inputStr) || 0;
-        if (growthStr !== undefined && growthStr !== null) entry.growth = parseFloat(growthStr) || 0;
+        // A blank field means "not entered" — clear it so calculations fall back to the
+        // normal formula, rather than treating a blank as an explicit £0.
+        if (inputStr !== undefined && inputStr !== null) {
+            if (String(inputStr).trim() === '') delete entry.input;
+            else entry.input = parseFloat(inputStr) || 0;
+        }
+        if (growthStr !== undefined && growthStr !== null) {
+            if (String(growthStr).trim() === '') delete entry.growth;
+            else entry.growth = parseFloat(growthStr) || 0;
+        }
         this.editingTrackingBalance = null;
         this.saveData(); this.showToast('Saved');
     }
