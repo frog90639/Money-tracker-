@@ -228,10 +228,7 @@ class MoneyTracker {
         return entries.length ? entries[entries.length-1] : null;
     }
     accountBalance(accId) {
-        const acc = this.accounts.find(a => a.id === accId);
-        if (!acc) return 0;
-        const latest = this.latestEntry(accId);
-        return latest ? latest.balance : (parseFloat(acc.startingBalance) || 0);
+        return this.balanceAsOf(accId, this.currentMonthKey());
     }
     accountCategoryName(catId) { const c = this.accountCategories.find(x => x.id === catId); return c ? c.name : 'Uncategorised'; }
     isISACategoryId(catId) { const c = this.accountCategories.find(x => x.id === catId); return !!(c && /isa/i.test(c.name.trim())); }
@@ -641,6 +638,7 @@ class MoneyTracker {
         const acc = this.accounts.find(a => a.id === accountId);
         if (!acc) return 0;
         if (acc.openingMonth && mk < acc.openingMonth) return 0;
+        if (acc.closed && acc.closedMonth && mk > acc.closedMonth) return 0;
         const entry = this.entryAt(accountId, mk);
         if (entry) return entry.balance;
         const prev = this.latestEntryBefore(accountId, mk);
@@ -972,7 +970,7 @@ class MoneyTracker {
             return '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);"><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span><p class="text-xs mt-1" style="color: var(--color-text-muted);">Starts ' + this.monthLabel(a.openingMonth) + '</p></div>';
         }
         if (a.closed && a.closedMonth && mk > a.closedMonth) {
-            return '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);"><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(Closed)</span><p class="text-xs mt-1" style="color: var(--color-text-muted);">Closed ' + this.monthLabel(a.closedMonth) + ' · ' + this.fmt(this.balanceAsOf(a.id, mk)) + '</p></div>';
+            return '<div class="p-4' + borderStyle + '" style="border-color: var(--color-border);"><span class="font-medium" style="color: var(--color-text);">' + a.name + '</span> <span class="text-xs" style="color: var(--color-text-muted);">(Closed)</span><p class="text-xs mt-1" style="color: var(--color-text-muted);">Closed ' + this.monthLabel(a.closedMonth) + ' · ' + this.fmt(this.balanceAsOf(a.id, a.closedMonth)) + '</p></div>';
         }
         const entry = this.entryAt(a.id, mk);
         const prev = this.latestEntryBefore(a.id, mk);
